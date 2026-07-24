@@ -1,0 +1,42 @@
+name: PlexonBackpacks
+version: '1.0.0'
+main: com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin
+description: Lightweight, tiered backpacks represented by custom player heads.
+author: Tonim
+website: https://github.com/ZpkDxGames/PlexonBackpacks
+api-version: '26.2'
+
+commands:
+  backpack:
+    description: Open and manage PlexonBackpacks.
+    usage: /backpack [open|tiers|inspect|give|reload|save]
+    aliases: [backpacks, bp]
+    permission: plexonbackpacks.use
+
+permissions:
+  plexonbackpacks.use:
+    description: Open backpacks and use the main command.
+    default: true
+  plexonbackpacks.craft:
+    description: Craft configured backpacks.
+    default: true
+  plexonbackpacks.give:
+    description: Give backpacks to players.
+    default: op
+  plexonbackpacks.reload:
+    description: Reload PlexonBackpacks.
+    default: op
+  plexonbackpacks.save:
+    description: Force-save backpack data.
+    default: op
+  plexonbackpacks.bypass-owner:
+    description: Open backpacks owned by another player.
+    default: op
+  plexonbackpacks.admin:
+    description: Grants every PlexonBackpacks administrative permission.
+    default: op
+    children:
+      plexonbackpacks.give: true
+      plexonbackpacks.reload: true
+      plexonbackpacks.save: true
+      plexonbackpacks.bypass-owner: true

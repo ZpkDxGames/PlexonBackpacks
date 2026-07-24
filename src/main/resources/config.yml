@@ -1,0 +1,181 @@
+# PlexonBackpacks 1.0.0
+# MiniMessage formatting: https://docs.papermc.io/adventure/minimessage/format/
+
+settings:
+  # When enabled, a crafted backpack binds to the first player who opens it.
+  ownership-enabled: true
+  bind-on-first-open: true
+
+  # Backpack contents are cached in memory and written in batches.
+  # 200 ticks = 10 seconds. Set to 0 to disable periodic saves.
+  autosave-interval-ticks: 200
+
+  # Automatically unlock configured crafting recipes for players.
+  discover-recipes: true
+
+  # Admin-given backpacks are immediately owned by the recipient.
+  give-binds-to-recipient: true
+
+messages:
+  prefix: "<gradient:#46d3ff:#8b5cf6><bold>PlexonBackpacks</bold></gradient> <dark_gray>»</dark_gray> "
+  no-permission: "<prefix><red>You do not have permission to do that."
+  players-only: "<prefix><red>Only players can use this command."
+  held-required: "<prefix><yellow>Hold a Plexon backpack in either hand first."
+  invalid-tier: "<prefix><red>Unknown tier <white><tier></white>. Use <white>/backpack tiers</white>."
+  invalid-amount: "<prefix><red>The amount must be between 1 and 64."
+  player-not-found: "<prefix><red>Player <white><player></white> is not online."
+  gave: "<prefix><green>Gave <white><amount>x <tier></white> to <white><player></white>."
+  received: "<prefix><green>You received <white><amount>x <tier></white>."
+  dropped-overflow: "<prefix><yellow>Your inventory was full, so the remaining backpack was dropped at your feet."
+  already-open: "<prefix><yellow>You already have a backpack open."
+  in-use: "<prefix><red>That backpack is currently being used by another player."
+  bound: "<prefix><green>This backpack is now bound to you."
+  wrong-owner: "<prefix><red>This backpack belongs to <white><owner></white>."
+  invalid-backpack: "<prefix><red>This backpack is invalid or its tier no longer exists."
+  cannot-nest: "<prefix><red>Backpacks cannot be stored inside another backpack."
+  cannot-place: "<prefix><yellow>Backpack heads cannot be placed as blocks."
+  crafted-one-at-a-time: "<prefix><yellow>Backpacks must be crafted one at a time to keep every storage ID unique."
+  craft-no-permission: "<prefix><red>You cannot craft that backpack tier."
+  reloaded: "<prefix><green>Configuration and recipes reloaded."
+  reload-failed: "<prefix><red>Reload failed. Check the console; the previous tier setup is still active."
+  saved: "<prefix><green>All backpack data has been saved."
+  tiers-header: "<prefix><white>Available tiers:"
+  tier-line: "<gray> • <tier> <dark_gray>—</dark_gray> <white><slots> slots"
+  inspect: "<prefix><gray>ID: <white><id></white> | Tier: <tier> <gray>| Owner: <white><owner></white> | Slots: <white><slots></white>"
+  help:
+    - "<gradient:#46d3ff:#8b5cf6><bold>PlexonBackpacks</bold></gradient>"
+    - "<gray>/backpack <white>— Open the backpack in your hand"
+    - "<gray>/backpack tiers <white>— List configured tiers"
+    - "<gray>/backpack inspect <white>— Inspect the backpack in your hand"
+    - "<gray>/backpack give <player> <tier> [amount] <white>— Admin give"
+    - "<gray>/backpack reload <white>— Reload configuration"
+    - "<gray>/backpack save <white>— Save all data now"
+
+# Each tier needs 9–54 slots in multiples of nine.
+# Texture accepts a textures.minecraft.net hash, full URL, or a base64 texture value.
+# Set permission to "" when everyone may use the tier.
+tiers:
+  basic:
+    display-name: "<gradient:#d69b62:#8b5a2b><bold>Basic Backpack</bold></gradient>"
+    inventory-title: "<dark_gray>Basic Backpack"
+    slots: 9
+    texture: "8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5"
+    custom-model-data: 1001
+    permission: ""
+    lore:
+      - "<gray>Tier: <white><tier>"
+      - "<gray>Capacity: <white><slots> slots"
+      - "<gray>Owner: <white><owner>"
+      - ""
+      - "<yellow>Right-click to open"
+    recipe:
+      enabled: true
+      shape:
+        - "LSL"
+        - "LCL"
+        - "LLL"
+      ingredients:
+        L: LEATHER
+        S: STRING
+        C: CHEST
+
+  iron:
+    display-name: "<gradient:#f5f5f5:#8f9aa6><bold>Iron Backpack</bold></gradient>"
+    inventory-title: "<dark_gray>Iron Backpack"
+    slots: 18
+    texture: "ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db"
+    custom-model-data: 1002
+    permission: ""
+    lore:
+      - "<gray>Tier: <white><tier>"
+      - "<gray>Capacity: <white><slots> slots"
+      - "<gray>Owner: <white><owner>"
+      - ""
+      - "<yellow>Right-click to open"
+    recipe:
+      enabled: true
+      shape:
+        - "ISI"
+        - "ICI"
+        - "ILI"
+      ingredients:
+        I: IRON_INGOT
+        S: STRING
+        C: CHEST
+        L: LEATHER
+
+  gold:
+    display-name: "<gradient:#fff176:#f59e0b><bold>Gold Backpack</bold></gradient>"
+    inventory-title: "<dark_gray>Gold Backpack"
+    slots: 27
+    texture: "51bbbc5c24384ecb2f6844da285cccf9eb011c7a6670177cf75cd65513bc1274"
+    custom-model-data: 1003
+    permission: ""
+    lore:
+      - "<gray>Tier: <white><tier>"
+      - "<gray>Capacity: <white><slots> slots"
+      - "<gray>Owner: <white><owner>"
+      - ""
+      - "<yellow>Right-click to open"
+    recipe:
+      enabled: true
+      shape:
+        - "GSG"
+        - "GCG"
+        - "GLG"
+      ingredients:
+        G: GOLD_INGOT
+        S: STRING
+        C: CHEST
+        L: LEATHER
+
+  diamond:
+    display-name: "<gradient:#67e8f9:#06b6d4><bold>Diamond Backpack</bold></gradient>"
+    inventory-title: "<dark_gray>Diamond Backpack"
+    slots: 36
+    texture: "10d1b0732bf7a70de4dc01559cc5c9811068ef7b6095010382709f94093927f6"
+    custom-model-data: 1004
+    permission: ""
+    lore:
+      - "<gray>Tier: <white><tier>"
+      - "<gray>Capacity: <white><slots> slots"
+      - "<gray>Owner: <white><owner>"
+      - ""
+      - "<yellow>Right-click to open"
+    recipe:
+      enabled: true
+      shape:
+        - "DSD"
+        - "DCD"
+        - "DLD"
+      ingredients:
+        D: DIAMOND
+        S: STRING
+        C: CHEST
+        L: LEATHER
+
+  netherite:
+    display-name: "<gradient:#a78bfa:#4c1d95><bold>Netherite Backpack</bold></gradient>"
+    inventory-title: "<dark_gray>Netherite Backpack"
+    slots: 54
+    texture: "835d7cc09fffbca3e1c00d421afaa432cf71fcb09555f54523e5220d1af0f97d"
+    custom-model-data: 1005
+    permission: ""
+    lore:
+      - "<gray>Tier: <white><tier>"
+      - "<gray>Capacity: <white><slots> slots"
+      - "<gray>Owner: <white><owner>"
+      - ""
+      - "<yellow>Right-click to open"
+    recipe:
+      enabled: true
+      shape:
+        - "NSN"
+        - "ECE"
+        - "NLN"
+      ingredients:
+        N: NETHERITE_INGOT
+        E: ENDER_CHEST
+        S: STRING
+        C: CHEST
+        L: LEATHER
