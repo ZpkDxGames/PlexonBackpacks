@@ -3,9 +3,11 @@ package com.zpkdxgames.plexonbackpacks;
 import com.zpkdxgames.plexonbackpacks.command.BackpackCommand;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
+import com.zpkdxgames.plexonbackpacks.listener.AdminMenuListener;
 import com.zpkdxgames.plexonbackpacks.listener.BackpackListener;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.recipe.RecipeRegistry;
+import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
 import org.bukkit.command.PluginCommand;
@@ -18,12 +20,14 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
     private BackpackDataStore dataStore;
     private BackpackItemFactory itemFactory;
     private BackpackService backpackService;
+    private AdminMenuService adminMenuService;
     private RecipeRegistry recipeRegistry;
     private BukkitTask autosaveTask;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        migrateConfigIfNeeded();
 
         configManager = new ConfigManager(this);
         try {
@@ -35,14 +39,19 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
         }
 
         messages = new Messages(this);
-        dataStore = new BackpackDataStore(this);
+        dataStore = new BackpackDataStore(this, configManager);
         dataStore.load();
         itemFactory = new BackpackItemFactory(this, configManager);
         backpackService = new BackpackService(configManager, messages, itemFactory, dataStore);
+        adminMenuService = new AdminMenuService(configManager, itemFactory);
         recipeRegistry = new RecipeRegistry(this, configManager, itemFactory, messages);
 
         getServer().getPluginManager().registerEvents(
                 new BackpackListener(backpackService, itemFactory, messages),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                new AdminMenuListener(configManager, messages, itemFactory, backpackService),
                 this
         );
         getServer().getPluginManager().registerEvents(recipeRegistry, this);
@@ -58,14 +67,15 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
                 configManager,
                 messages,
                 itemFactory,
-                backpackService
+                backpackService,
+                adminMenuService
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);
 
         recipeRegistry.registerAll();
         restartAutosave();
-        getLogger().info("PlexonBackpacks 1.0.0 enabled with "
+        getLogger().info("PlexonBackpacks " + getPluginMeta().getVersion() + " enabled with "
                 + configManager.tiers().size() + " tier(s).");
     }
 
@@ -97,6 +107,7 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
         }
 
         backpackService.closeAll();
+        adminMenuService.reload();
         recipeRegistry.registerAll();
         restartAutosave();
         return true;
@@ -120,5 +131,52 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
             backpackService.snapshotOpenSessions();
             dataStore.requestSave();
         }, interval, interval);
+    }
+
+    private void migrateConfigIfNeeded() {
+        if (getConfig().getInt("config-version", 1) >= 2) {
+            return;
+        }
+
+        updateDefaultTexture(
+                "tiers.basic.texture",
+                "8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5",
+                "http://textures.minecraft.net/texture/8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5"
+        );
+        updateDefaultTexture(
+                "tiers.iron.texture",
+                "ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db",
+                "http://textures.minecraft.net/texture/ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db"
+        );
+        updateDefaultTexture(
+                "tiers.gold.texture",
+                "51bbbc5c24384ecb2f6844da285cccf9eb011c7a6670177cf75cd65513bc1274",
+                "http://textures.minecraft.net/texture/a37a35522f67b2af92345592846b702b9afb9d7c8dbad5ea150673c9e44de3"
+        );
+        updateDefaultTexture(
+                "tiers.diamond.texture",
+                "10d1b0732bf7a70de4dc01559cc5c9811068ef7b6095010382709f94093927f6",
+                "http://textures.minecraft.net/texture/df70fab3246fe027ce0bba885a73c6e82d8ff8f358231e8461f956560cfa58f"
+        );
+        updateDefaultTexture(
+                "tiers.netherite.texture",
+                "835d7cc09fffbca3e1c00d421afaa432cf71fcb09555f54523e5220d1af0f97d",
+                "http://textures.minecraft.net/texture/a9ab1fdcbe878d1e55bdd43cebc5e43836a6da69541f4a233fe88f1305668"
+        );
+
+        getConfig().set("settings.give-binds-to-recipient", null);
+        if (!getConfig().isSet("settings.csv-compaction-threshold-updates")) {
+            getConfig().set("settings.csv-compaction-threshold-updates", 10_000);
+        }
+        getConfig().set("config-version", 2);
+        saveConfig();
+        getLogger().info("Updated config.yml to format version 2.");
+    }
+
+    private void updateDefaultTexture(String path, String previousHash, String replacementUrl) {
+        String current = getConfig().getString(path, "");
+        if (current.equals(previousHash) || current.endsWith("/" + previousHash)) {
+            getConfig().set(path, replacementUrl);
+        }
     }
 }

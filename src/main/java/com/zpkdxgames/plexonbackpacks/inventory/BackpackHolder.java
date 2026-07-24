@@ -4,6 +4,7 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Arrays;
 import java.util.UUID;
 
 public final class BackpackHolder implements InventoryHolder {
@@ -11,6 +12,7 @@ public final class BackpackHolder implements InventoryHolder {
     private final UUID viewerId;
     private final String tierId;
     private Inventory inventory;
+    private int snapshotHash;
 
     public BackpackHolder(UUID backpackId, UUID viewerId, String tierId) {
         this.backpackId = backpackId;
@@ -32,6 +34,19 @@ public final class BackpackHolder implements InventoryHolder {
 
     public void inventory(Inventory inventory) {
         this.inventory = inventory;
+    }
+
+    public void resetSnapshotHash() {
+        snapshotHash = Arrays.hashCode(getInventory().getStorageContents());
+    }
+
+    public boolean contentsChanged() {
+        int currentHash = Arrays.hashCode(getInventory().getStorageContents());
+        if (currentHash == snapshotHash) {
+            return false;
+        }
+        snapshotHash = currentHash;
+        return true;
     }
 
     @Override

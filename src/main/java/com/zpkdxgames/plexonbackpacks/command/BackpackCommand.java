@@ -6,6 +6,7 @@ import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
+import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
@@ -29,19 +30,22 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
     private final Messages messages;
     private final BackpackItemFactory itemFactory;
     private final BackpackService service;
+    private final AdminMenuService adminMenu;
 
     public BackpackCommand(
             PlexonBackpacksPlugin plugin,
             ConfigManager config,
             Messages messages,
             BackpackItemFactory itemFactory,
-            BackpackService service
+            BackpackService service,
+            AdminMenuService adminMenu
     ) {
         this.plugin = plugin;
         this.config = config;
         this.messages = messages;
         this.itemFactory = itemFactory;
         this.service = service;
+        this.adminMenu = adminMenu;
     }
 
     @Override
@@ -65,6 +69,7 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
                 yield true;
             }
             case "inspect" -> inspect(sender);
+            case "gui", "admin" -> openAdminMenu(sender);
             case "give" -> give(sender, args);
             case "reload" -> reload(sender);
             case "save" -> save(sender);
@@ -129,6 +134,19 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean openAdminMenu(CommandSender sender) {
+        if (!sender.hasPermission("plexonbackpacks.admin-gui")) {
+            messages.send(sender, "no-permission");
+            return true;
+        }
+        if (!(sender instanceof Player player)) {
+            messages.send(sender, "players-only");
+            return true;
+        }
+        adminMenu.open(player);
+        return true;
+    }
+
     private boolean give(CommandSender sender, String[] args) {
         if (!sender.hasPermission("plexonbackpacks.give")) {
             messages.send(sender, "no-permission");
@@ -164,12 +182,9 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             return true;
         }
 
-        UUID owner = config.ownershipEnabled() && config.giveBindsToRecipient()
-                ? target.getUniqueId()
-                : null;
         boolean dropped = false;
         for (int count = 0; count < amount; count++) {
-            ItemStack backpack = service.createBackpack(tier, owner);
+            ItemStack backpack = service.createBackpack(tier);
             if (!target.getInventory().addItem(backpack).isEmpty()) {
                 target.getWorld().dropItemNaturally(target.getLocation(), backpack);
                 dropped = true;
@@ -240,6 +255,9 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         List<String> options = new ArrayList<>();
         if (args.length == 1) {
             options.addAll(List.of("open", "tiers", "inspect", "help"));
+            if (sender.hasPermission("plexonbackpacks.admin-gui")) {
+                options.add("gui");
+            }
             if (sender.hasPermission("plexonbackpacks.give")) {
                 options.add("give");
             }

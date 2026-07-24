@@ -25,8 +25,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,6 +41,7 @@ public final class BackpackItemFactory {
     private final NamespacedKey backpackIdKey;
     private final NamespacedKey tierKey;
     private final NamespacedKey ownerKey;
+    private final Map<String, ResolvableProfile> profileCache = new ConcurrentHashMap<>();
 
     public BackpackItemFactory(PlexonBackpacksPlugin plugin, ConfigManager config) {
         this.plugin = plugin;
@@ -55,6 +58,34 @@ public final class BackpackItemFactory {
     public ItemStack create(TierDefinition tier, UUID id, UUID owner) {
         ItemStack item = new ItemStack(Material.PLAYER_HEAD);
         applyMetadata(item, tier, id, owner);
+        return item;
+    }
+
+    public ItemStack createMenuIcon(TierDefinition tier, List<Component> lore) {
+        ItemStack item = new ItemStack(Material.PLAYER_HEAD);
+        applyMetadata(item, tier, null, null);
+        ItemMeta meta = item.getItemMeta();
+        meta.lore(lore);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    public ItemStack createPlayerProfileHead(
+            UUID profileId,
+            String profileName,
+            Component displayName,
+            List<Component> lore
+    ) {
+        ItemStack item = new ItemStack(Material.PLAYER_HEAD);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(displayName);
+        meta.lore(lore);
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+        item.setItemMeta(meta);
+        item.setData(
+                DataComponentTypes.PROFILE,
+                ResolvableProfile.resolvableProfile().uuid(profileId).name(profileName)
+        );
         return item;
     }
 
@@ -86,12 +117,18 @@ public final class BackpackItemFactory {
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
 
         PersistentDataContainer data = meta.getPersistentDataContainer();
-        data.set(backpackIdKey, PersistentDataType.STRING, id.toString());
-        data.set(tierKey, PersistentDataType.STRING, tier.id());
-        if (owner == null) {
+        if (id == null) {
+            data.remove(backpackIdKey);
+            data.remove(tierKey);
             data.remove(ownerKey);
         } else {
-            data.set(ownerKey, PersistentDataType.STRING, owner.toString());
+            data.set(backpackIdKey, PersistentDataType.STRING, id.toString());
+            data.set(tierKey, PersistentDataType.STRING, tier.id());
+            if (owner == null) {
+                data.remove(ownerKey);
+            } else {
+                data.set(ownerKey, PersistentDataType.STRING, owner.toString());
+            }
         }
 
         item.setItemMeta(meta);
@@ -114,18 +151,21 @@ public final class BackpackItemFactory {
             return;
         }
 
-        UUID profileId = UUID.nameUUIDFromBytes(
-                ("PlexonBackpacks:" + textureUrl.get()).getBytes(StandardCharsets.UTF_8)
-        );
-        String textureJson = "{\"textures\":{\"SKIN\":{\"url\":\"" + textureUrl.get() + "\"}}}";
-        String textureValue = Base64.getEncoder().encodeToString(textureJson.getBytes(StandardCharsets.UTF_8));
-        item.setData(
-                DataComponentTypes.PROFILE,
-                ResolvableProfile.resolvableProfile()
-                        .uuid(profileId)
-                        .name("PlexonPack")
-                        .addProperty(new ProfileProperty("textures", textureValue))
-        );
+        String key = textureUrl.get().toString();
+        ResolvableProfile profile = profileCache.computeIfAbsent(key, ignored -> {
+            UUID profileId = UUID.nameUUIDFromBytes(
+                    ("PlexonBackpacks:" + textureUrl.get()).getBytes(StandardCharsets.UTF_8)
+            );
+            String textureJson = "{\"textures\":{\"SKIN\":{\"url\":\"" + textureUrl.get() + "\"}}}";
+            String textureValue = Base64.getEncoder()
+                    .encodeToString(textureJson.getBytes(StandardCharsets.UTF_8));
+            return ResolvableProfile.resolvableProfile()
+                    .uuid(profileId)
+                    .name("PlexonPack")
+                    .addProperty(new ProfileProperty("textures", textureValue))
+                    .build();
+        });
+        item.setData(DataComponentTypes.PROFILE, profile);
     }
 
     private Optional<URL> parseTextureUrl(String configuredTexture) {

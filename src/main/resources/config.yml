@@ -1,20 +1,23 @@
-# PlexonBackpacks 1.0.0
+# PlexonBackpacks 1.1.0
 # MiniMessage formatting: https://docs.papermc.io/adventure/minimessage/format/
+
+config-version: 2
 
 settings:
   # When enabled, a crafted backpack binds to the first player who opens it.
   ownership-enabled: true
   bind-on-first-open: true
 
-  # Backpack contents are cached in memory and written in batches.
+  # Backpack contents stay in memory. Only changed backpacks are serialized,
+  # then appended to CSV by an asynchronous writer.
   # 200 ticks = 10 seconds. Set to 0 to disable periodic saves.
   autosave-interval-ticks: 200
+  # Compact the append-only CSV after this many superseded rows. Compaction is
+  # asynchronous and uses an atomic file replacement.
+  csv-compaction-threshold-updates: 10000
 
   # Automatically unlock configured crafting recipes for players.
   discover-recipes: true
-
-  # Admin-given backpacks are immediately owned by the recipient.
-  give-binds-to-recipient: true
 
 messages:
   prefix: "<gradient:#46d3ff:#8b5cf6><bold>PlexonBackpacks</bold></gradient> <dark_gray>»</dark_gray> "
@@ -26,6 +29,8 @@ messages:
   player-not-found: "<prefix><red>Player <white><player></white> is not online."
   gave: "<prefix><green>Gave <white><amount>x <tier></white> to <white><player></white>."
   received: "<prefix><green>You received <white><amount>x <tier></white>."
+  admin-gui-given: "<prefix><green>You received one unbound <white><tier></white> backpack."
+  author-link: "<prefix><gradient:#f59e0b:#8b5cf6>Created by ZpkDxGames</gradient> <dark_gray>—</dark_gray> <click:open_url:'https://namemc.com/profile/ZpkDxGames.1'><hover:show_text:'<yellow>Open the author profile'><aqua><underlined>View NameMC profile</underlined></aqua></hover></click>"
   dropped-overflow: "<prefix><yellow>Your inventory was full, so the remaining backpack was dropped at your feet."
   already-open: "<prefix><yellow>You already have a backpack open."
   in-use: "<prefix><red>That backpack is currently being used by another player."
@@ -47,6 +52,7 @@ messages:
     - "<gray>/backpack <white>— Open the backpack in your hand"
     - "<gray>/backpack tiers <white>— List configured tiers"
     - "<gray>/backpack inspect <white>— Inspect the backpack in your hand"
+    - "<gray>/backpack gui <white>— Open the OP/admin giver GUI"
     - "<gray>/backpack give <player> <tier> [amount] <white>— Admin give"
     - "<gray>/backpack reload <white>— Reload configuration"
     - "<gray>/backpack save <white>— Save all data now"
@@ -59,7 +65,7 @@ tiers:
     display-name: "<gradient:#d69b62:#8b5a2b><bold>Basic Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Basic Backpack"
     slots: 9
-    texture: "8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5"
+    texture: "http://textures.minecraft.net/texture/8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5"
     custom-model-data: 1001
     permission: ""
     lore:
@@ -83,7 +89,7 @@ tiers:
     display-name: "<gradient:#f5f5f5:#8f9aa6><bold>Iron Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Iron Backpack"
     slots: 18
-    texture: "ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db"
+    texture: "http://textures.minecraft.net/texture/ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db"
     custom-model-data: 1002
     permission: ""
     lore:
@@ -108,7 +114,7 @@ tiers:
     display-name: "<gradient:#fff176:#f59e0b><bold>Gold Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Gold Backpack"
     slots: 27
-    texture: "51bbbc5c24384ecb2f6844da285cccf9eb011c7a6670177cf75cd65513bc1274"
+    texture: "http://textures.minecraft.net/texture/a37a35522f67b2af92345592846b702b9afb9d7c8dbad5ea150673c9e44de3"
     custom-model-data: 1003
     permission: ""
     lore:
@@ -133,7 +139,7 @@ tiers:
     display-name: "<gradient:#67e8f9:#06b6d4><bold>Diamond Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Diamond Backpack"
     slots: 36
-    texture: "10d1b0732bf7a70de4dc01559cc5c9811068ef7b6095010382709f94093927f6"
+    texture: "http://textures.minecraft.net/texture/df70fab3246fe027ce0bba885a73c6e82d8ff8f358231e8461f956560cfa58f"
     custom-model-data: 1004
     permission: ""
     lore:
@@ -158,7 +164,7 @@ tiers:
     display-name: "<gradient:#a78bfa:#4c1d95><bold>Netherite Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Netherite Backpack"
     slots: 54
-    texture: "835d7cc09fffbca3e1c00d421afaa432cf71fcb09555f54523e5220d1af0f97d"
+    texture: "http://textures.minecraft.net/texture/a9ab1fdcbe878d1e55bdd43cebc5e43836a6da69541f4a233fe88f1305668"
     custom-model-data: 1005
     permission: ""
     lore:

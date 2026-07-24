@@ -6,9 +6,11 @@ import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.Event.Result;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockDispenseArmorEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -40,9 +42,12 @@ public final class BackpackListener implements Listener {
         this.messages = messages;
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onInteract(PlayerInteractEvent event) {
         if (!event.getAction().isRightClick()) {
+            return;
+        }
+        if (event.useItemInHand() == Result.DENY && event.getAction() != Action.RIGHT_CLICK_AIR) {
             return;
         }
         ItemStack item = event.getItem();
@@ -53,7 +58,12 @@ public final class BackpackListener implements Listener {
         if (hand != EquipmentSlot.HAND && hand != EquipmentSlot.OFF_HAND) {
             return;
         }
-        event.setCancelled(true);
+        if (hand == EquipmentSlot.OFF_HAND
+                && itemFactory.isBackpack(event.getPlayer().getInventory().getItemInMainHand())) {
+            return;
+        }
+        event.setUseInteractedBlock(Result.DENY);
+        event.setUseItemInHand(Result.DENY);
         service.open(event.getPlayer(), item);
     }
 

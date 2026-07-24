@@ -6,7 +6,7 @@
 
     <groupId>com.zpkdxgames</groupId>
     <artifactId>PlexonBackpacks</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <name>PlexonBackpacks</name>
     <description>Lightweight, tiered backpacks represented by custom player heads.</description>
     <url>https://github.com/ZpkDxGames/PlexonBackpacks</url>

@@ -147,16 +147,19 @@ public final class ConfigManager {
         return plugin.getConfig().getBoolean("settings.bind-on-first-open", true);
     }
 
-    public boolean giveBindsToRecipient() {
-        return plugin.getConfig().getBoolean("settings.give-binds-to-recipient", true);
-    }
-
     public boolean discoverRecipes() {
         return plugin.getConfig().getBoolean("settings.discover-recipes", true);
     }
 
     public long autosaveIntervalTicks() {
         return Math.max(0L, plugin.getConfig().getLong("settings.autosave-interval-ticks", 200L));
+    }
+
+    public long csvCompactionThresholdUpdates() {
+        return Math.max(
+                1_000L,
+                plugin.getConfig().getLong("settings.csv-compaction-threshold-updates", 10_000L)
+        );
     }
 
     public Component component(String value, String... placeholders) {

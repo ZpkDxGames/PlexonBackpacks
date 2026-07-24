@@ -81,7 +81,7 @@ public final class BackpackService {
         if (config.ownershipEnabled()) {
             if (record.owner() == null && config.bindOnFirstOpen()) {
                 record.owner(player.getUniqueId());
-                dataStore.markDirty();
+                dataStore.markDirty(record.id());
                 refreshMatchingItems(player, record.id(), tier, record.owner());
                 messages.send(player, "bound");
             } else if (record.owner() != null
@@ -105,19 +105,20 @@ public final class BackpackService {
         for (int slot = 0; slot < Math.min(contents.length, inventory.getSize()); slot++) {
             inventory.setItem(slot, contents[slot]);
         }
+        holder.resetSnapshotHash();
 
         locks.put(record.id(), player.getUniqueId());
         sessionsByPlayer.put(player.getUniqueId(), holder);
         record.lastAccess(System.currentTimeMillis());
-        dataStore.markDirty();
+        dataStore.markDirty(record.id());
         player.openInventory(inventory);
         return true;
     }
 
-    public ItemStack createBackpack(TierDefinition tier, UUID owner) {
-        ItemStack item = itemFactory.create(tier, owner);
+    public ItemStack createBackpack(TierDefinition tier) {
+        ItemStack item = itemFactory.create(tier, null);
         UUID id = itemFactory.backpackId(item).orElseThrow();
-        dataStore.register(id, tier.id(), owner, tier.slots());
+        dataStore.register(id, tier.id(), null, tier.slots());
         return item;
     }
 
@@ -129,19 +130,19 @@ public final class BackpackService {
         dataStore.find(holder.backpackId()).ifPresent(record -> {
             record.contents(inventory.getContents());
             record.lastAccess(System.currentTimeMillis());
-            dataStore.markDirty();
+            dataStore.markDirty(record.id());
         });
     }
 
     public void snapshotOpenSessions() {
         for (BackpackHolder holder : sessionsByPlayer.values()) {
+            if (!holder.contentsChanged()) {
+                continue;
+            }
             dataStore.find(holder.backpackId()).ifPresent(record -> {
-                record.contents(holder.getInventory().getContents());
-                record.lastAccess(System.currentTimeMillis());
+                record.contents(holder.getInventory().getStorageContents());
+                dataStore.markDirty(record.id());
             });
-        }
-        if (!sessionsByPlayer.isEmpty()) {
-            dataStore.markDirty();
         }
     }
 
