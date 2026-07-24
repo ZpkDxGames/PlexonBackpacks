@@ -29,39 +29,9 @@ storage ID.
 ## Requirements
 
 - Paper 26.2 or a compatible fork
-- Java 25 or newer
-
-## Build
-
-The project includes Maven and Gradle Kotlin DSL build files:
-
-```bash
-mvn clean package
-```
-
-Or:
-
-```bash
-gradle clean build
-```
-
-The release JAR is generated at either:
-
-```text
-target/PlexonBackpacks-1.1.0.jar
-build/libs/PlexonBackpacks-1.1.0.jar
-```
-
-## Install
-
-1. Put `PlexonBackpacks-1.1.0.jar` in the server's `plugins/` directory.
-2. Restart the server.
-3. Edit `plugins/PlexonBackpacks/config.yml` if desired.
-4. Run `/backpack reload` after configuration changes.
 
 Backpack data is stored in
-`plugins/PlexonBackpacks/backpacks-data.csv`. Do not edit that file while the
-server is running.
+`plugins/PlexonBackpacks/backpacks-data.csv`. Do not edit that file, at all!
 
 When upgrading from 1.0.0, `backpacks-data.yml` is migrated automatically and
 kept as `backpacks-data.migrated.yml`.
@@ -114,7 +84,3 @@ protects the latest state during a clean shutdown.
 
 Created by [ZpkDxGames](https://namemc.com/profile/ZpkDxGames.1), related to
 PlexonChats and GhostBlocks.
-
-## License
-
-MIT
