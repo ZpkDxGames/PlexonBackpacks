@@ -1,40 +1,47 @@
 # PlexonBackpacks
 
-PlexonBackpacks is a lightweight, standalone tiered-backpack plugin for
-Paper 26.2. Every backpack is a custom player-head item with its own persistent
-storage ID.
+PlexonBackpacks is a lightweight tiered-backpack plugin for Paper 26.2. Every physical backpack is a custom player-head item with its own stable UUID and persistent storage record.
 
-## Included in 1.1.0
+## 1.2.0
 
-- Five configurable tiers: Basic (9), Iron (18), Gold (27), Diamond (36), and
-  Netherite (54 slots)
-- The requested custom-head texture for every default tier
-- OP/admin giver GUI with one-click unbound backpacks and an author easter egg
-- Right-click opening against blocks or while looking at the air
-- Ownership applied only when an unbound backpack is first opened
-- Fully configurable MiniMessage names, lore, GUI titles, messages, recipes,
-  sizes, textures, permissions, and custom model data
-- Unique storage per physical backpack
+PlexonBackpacks 1.2.0 is the Core-native integration release. Gameplay, PDC identity, ownership rules and the append-only CSV journal remain owned by PlexonBackpacks.
+
+- PlexonCore 1.0.0 integration with `CORE` and `STANDALONE` runtime modes
+- `backpacks` module registration with Core API range `>=1.0 <2.0`
+- Public `PlexonBackpacksAPI` through Bukkit `ServicesManager`
+- Immutable backpack, tier and open-session views
+- `PlexonBackpackOpenedEvent`, `PlexonBackpackClosedEvent` and `PlexonBackpackBoundEvent`
+- Stable per-session and per-event IDs
+- `/backpack diagnostics`
+- Verified Core dependency provisioning without shading Core into the plugin JAR
+- Tag-driven `v1.2.0` release workflow with SHA-256 checksums
+
+PlexonCore is a soft dependency. If Core is absent or cannot be linked safely, backpack gameplay and the public Backpack API/events continue in standalone compatibility mode.
+
+## Preserved backpack features
+
+- Five configurable tiers: Basic (9), Iron (18), Gold (27), Diamond (36), Netherite (54)
+- Custom player-head textures and custom model data
+- Unique storage UUID per physical backpack
+- Ownership applied only on the first successful opening
+- Optional owner enforcement and bypass permission
+- Right-click block/air opening from main or off hand
+- Administrative giver GUI and unique unbound give/craft output
 - Simultaneous-open locking
-- Backpack-in-backpack protection for clicks, shift-clicks, hotbar swaps,
-  offhand swaps, and drags
-- Placement, armor-dispenser, and active-backpack movement protection
-- In-memory contents with dirty-record-only CSV write-behind
-- Asynchronous append-only writes and infrequent atomic CSV compaction
-- Automatic migration from the 1.0.0 YAML data file
-- Change detection for open inventories, avoiding unchanged autosave work
-- Final synchronous shutdown save and corrupt-data preservation
-- Recipe discovery and safe one-at-a-time crafting
+- Complete anti-nesting protection for cursor, shift-click, hotbar, offhand and drag paths
+- Placement, armor-dispenser and active-backpack movement/drop protection
+- Dirty-record-only append-only CSV write-behind
+- Asynchronous writes, newest-row coalescing and atomic compaction
+- Legacy YAML migration, corrupt-file preservation and final synchronous shutdown save
+- Change detection for open inventories
 
 ## Requirements
 
-- Paper 26.2 or a compatible fork
+- Paper 26.2 or compatible fork
+- Java 25
+- PlexonCore 1.0.0 is optional at runtime but recommended for ecosystem registration
 
-Backpack data is stored in
-`plugins/PlexonBackpacks/backpacks-data.csv`. Do not edit that file, at all!
-
-When upgrading from 1.0.0, `backpacks-data.yml` is migrated automatically and
-kept as `backpacks-data.migrated.yml`.
+Backpack data remains at `plugins/PlexonBackpacks/backpacks-data.csv`. Do not replace or edit this file during the 1.2.0 upgrade.
 
 ## Commands
 
@@ -42,45 +49,32 @@ kept as `backpacks-data.migrated.yml`.
 |---|---|---|
 | `/backpack` | Open the backpack in either hand | `plexonbackpacks.use` |
 | `/backpack tiers` | List configured tiers | `plexonbackpacks.use` |
-| `/backpack inspect` | Show the held backpack's identity | `plexonbackpacks.use` |
-| `/backpack gui` | Open the OP/admin tier giver | `plexonbackpacks.admin-gui` |
+| `/backpack inspect` | Show the held backpack identity | `plexonbackpacks.use` |
+| `/backpack gui` | Open the administrative tier giver | `plexonbackpacks.admin-gui` |
 | `/backpack give <player> <tier> [amount]` | Give unique, unbound backpacks | `plexonbackpacks.give` |
-| `/backpack reload` | Reload tiers, messages, recipes, and GUI items | `plexonbackpacks.reload` |
-| `/backpack save` | Force a complete data save | `plexonbackpacks.save` |
+| `/backpack reload` | Reload tiers, messages, recipes and GUI items | `plexonbackpacks.reload` |
+| `/backpack save` | Force a synchronous backpack save | `plexonbackpacks.save` |
+| `/backpack diagnostics` | Show Core/API/session/storage summary | `plexonbackpacks.diagnostics` |
 
 Aliases: `/backpacks`, `/bp`
 
-## Performance design
+## Building
 
-The CSV file is an append-only journal. Normal autosaves serialize only records
-that changed since the previous pass, then append them on Paper's asynchronous
-scheduler. If multiple pending snapshots exist for one backpack, only the
-newest is queued.
+Gradle is the canonical build path. PlexonCore is compile-only and is never committed or shaded.
 
-The current row for each backpack is compacted into a fresh CSV file after
-`settings.csv-compaction-threshold-updates` superseded rows. Compaction runs
-off the main thread and finishes with atomic replacement when supported by the
-host filesystem.
+```bash
+bash scripts/provision-core.sh
+gradle clean test check jar
+```
 
-Open backpack inventories use a content hash so an unchanged backpack is not
-cloned, serialized, or queued every autosave cycle. A final synchronous save
-protects the latest state during a clean shutdown.
+The provisioning script downloads the official `PlexonCore-1.0.0.jar`, verifies its pinned SHA-256, and places it in a temporary local Maven repository under `.deps/`.
 
-## Configuration notes
+## Upgrade from 1.1.0
 
-- Tier sizes must be multiples of 9 from 9 through 54.
-- `texture` accepts a `textures.minecraft.net` hash, a complete URL, or a
-  standard base64 head texture value.
-- Set a tier's `permission` to an empty string to make it available to
-  everyone.
-- `plexonbackpacks.admin-gui` defaults to OP and can be granted explicitly.
-- Shift-click crafting is intentionally blocked because every crafted
-  backpack needs a different storage UUID.
-- Backpacks received from recipes, commands, or the GUI are always unbound.
-  With ownership enabled, the first successful opening claims the backpack.
-- Change `settings.autosave-interval-ticks` to tune the write-behind interval.
+Stop the server, replace `PlexonBackpacks-1.1.0.jar` with `PlexonBackpacks-1.2.0.jar`, keep the entire `plugins/PlexonBackpacks/` directory unchanged, and start the server. Existing backpack UUIDs, owners, tiers and contents require no data migration.
+
+See `docs/MIGRATION_1_2.md`, `docs/API.md` and `docs/PLEXONCORE.md` for the integration contracts and validation checklist.
 
 ## Author
 
-Created by [ZpkDxGames](https://namemc.com/profile/ZpkDxGames.1), related to
-PlexonChats and GhostBlocks.
+Created and maintained by Tonim / ZpkDxGames.

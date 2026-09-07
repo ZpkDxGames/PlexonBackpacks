@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 - 2026-09-07
+
+- Added PlexonCore 1.0.0 module registration with CORE/STANDALONE fallback
+- Added the public Bukkit `PlexonBackpacksAPI` and immutable metadata/session views
+- Added opened, closed and first-bind public lifecycle events with stable event/session IDs
+- Hardened first-open binding so denied or cancelled opens cannot claim an unbound backpack
+- Added `/backpack diagnostics` and `plexonbackpacks.diagnostics`
+- Added compile-only Core dependency provisioning with a pinned SHA-256 and no Core shading
+- Added Java 25 Gradle CI plus tag-driven `v1.2.0` release automation and checksums
+- Preserved the 1.1.0 CSV journal, PDC keys, UUIDs, ownership, anti-nesting and locking behavior
+
 ## 1.1.0 - 2026-07-24
 
 - Replaced full YAML snapshots with dirty-record-only append-only CSV storage

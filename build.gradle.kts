@@ -22,6 +22,8 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("io.papermc.paper:paper-api:26.2.build.65-beta")
+    testImplementation("com.zpkdxgames:PlexonCore:1.0.0")
 }
 
 java {
