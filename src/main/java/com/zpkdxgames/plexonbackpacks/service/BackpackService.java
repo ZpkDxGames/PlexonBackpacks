@@ -1,23 +1,29 @@
 package com.zpkdxgames.plexonbackpacks.service;
 
+import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
+import com.zpkdxgames.plexonbackpacks.event.PlexonBackpackBoundEvent;
+import com.zpkdxgames.plexonbackpacks.event.PlexonBackpackClosedEvent;
+import com.zpkdxgames.plexonbackpacks.event.PlexonBackpackOpenedEvent;
 import com.zpkdxgames.plexonbackpacks.inventory.BackpackHolder;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
-import org.bukkit.Bukkit;
-import org.bukkit.entity.Player;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.ItemStack;
-
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.logging.Level;
+import org.bukkit.Bukkit;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 
 public final class BackpackService {
+    private final PlexonBackpacksPlugin plugin;
     private final ConfigManager config;
     private final Messages messages;
     private final BackpackItemFactory itemFactory;
@@ -26,11 +32,13 @@ public final class BackpackService {
     private final Map<UUID, BackpackHolder> sessionsByPlayer = new HashMap<>();
 
     public BackpackService(
+            PlexonBackpacksPlugin plugin,
             ConfigManager config,
             Messages messages,
             BackpackItemFactory itemFactory,
             BackpackDataStore dataStore
     ) {
+        this.plugin = plugin;
         this.config = config;
         this.messages = messages;
         this.itemFactory = itemFactory;
@@ -38,6 +46,10 @@ public final class BackpackService {
     }
 
     public boolean open(Player player, ItemStack item) {
+        if (!Bukkit.isPrimaryThread()) {
+            throw new IllegalStateException("Backpack inventory opens must run on the primary server thread");
+        }
+
         Optional<UUID> optionalId = itemFactory.backpackId(item);
         Optional<String> optionalTierId = itemFactory.tierId(item);
         if (optionalId.isEmpty() || optionalTierId.isEmpty()) {
@@ -78,12 +90,10 @@ public final class BackpackService {
             return false;
         }
 
+        boolean bindAfterOpen = false;
         if (config.ownershipEnabled()) {
             if (record.owner() == null && config.bindOnFirstOpen()) {
-                record.owner(player.getUniqueId());
-                dataStore.markDirty(record.id());
-                refreshMatchingItems(player, record.id(), tier, record.owner());
-                messages.send(player, "bound");
+                bindAfterOpen = true;
             } else if (record.owner() != null
                     && !record.owner().equals(player.getUniqueId())
                     && !player.hasPermission("plexonbackpacks.bypass-owner")) {
@@ -93,7 +103,8 @@ public final class BackpackService {
         }
 
         int inventorySize = record.requiredSize(tier.slots());
-        BackpackHolder holder = new BackpackHolder(record.id(), player.getUniqueId(), tier.id());
+        UUID sessionId = UUID.randomUUID();
+        BackpackHolder holder = new BackpackHolder(record.id(), player.getUniqueId(), tier.id(), sessionId);
         Inventory inventory = Bukkit.createInventory(
                 holder,
                 inventorySize,
@@ -109,13 +120,50 @@ public final class BackpackService {
 
         locks.put(record.id(), player.getUniqueId());
         sessionsByPlayer.put(player.getUniqueId(), holder);
+        try {
+            player.openInventory(inventory);
+        } catch (RuntimeException exception) {
+            rollbackOpen(holder);
+            plugin.getLogger().log(Level.WARNING, "Could not open backpack inventory " + record.id(), exception);
+            return false;
+        }
+
+        if (player.getOpenInventory().getTopInventory() != inventory) {
+            rollbackOpen(holder);
+            return false;
+        }
+
+        if (bindAfterOpen) {
+            record.owner(player.getUniqueId());
+            dataStore.markDirty(record.id());
+            refreshMatchingItems(player, record.id(), tier, record.owner());
+            messages.send(player, "bound");
+            fireEventSafely(new PlexonBackpackBoundEvent(
+                    player,
+                    record.id(),
+                    tier.id(),
+                    record.owner(),
+                    eventId(sessionId, "bind"),
+                    sessionId));
+        }
+
         record.lastAccess(System.currentTimeMillis());
         dataStore.markDirty(record.id());
-        player.openInventory(inventory);
+        fireEventSafely(new PlexonBackpackOpenedEvent(
+                player,
+                record.id(),
+                tier.id(),
+                record.owner(),
+                inventorySize,
+                eventId(sessionId, "open"),
+                sessionId));
         return true;
     }
 
     public ItemStack createBackpack(TierDefinition tier) {
+        if (!Bukkit.isPrimaryThread()) {
+            throw new IllegalStateException("Backpack creation must run on the primary server thread");
+        }
         ItemStack item = itemFactory.create(tier, null);
         UUID id = itemFactory.backpackId(item).orElseThrow();
         dataStore.register(id, tier.id(), null, tier.slots());
@@ -127,10 +175,22 @@ public final class BackpackService {
             return;
         }
         locks.remove(holder.backpackId(), holder.viewerId());
+        boolean contentsChanged = holder.contentsChanged();
         dataStore.find(holder.backpackId()).ifPresent(record -> {
-            record.contents(inventory.getContents());
+            record.contents(inventory.getStorageContents());
             record.lastAccess(System.currentTimeMillis());
             dataStore.markDirty(record.id());
+            Player player = Bukkit.getPlayer(holder.viewerId());
+            if (player != null) {
+                fireEventSafely(new PlexonBackpackClosedEvent(
+                        player,
+                        record.id(),
+                        holder.tierId(),
+                        record.owner(),
+                        contentsChanged,
+                        eventId(holder.sessionId(), "close"),
+                        holder.sessionId()));
+            }
         });
     }
 
@@ -168,6 +228,19 @@ public final class BackpackService {
         return dataStore.find(backpackId);
     }
 
+    public int openSessionCount() {
+        return sessionsByPlayer.size();
+    }
+
+    public int activeLockCount() {
+        return locks.size();
+    }
+
+    private void rollbackOpen(BackpackHolder holder) {
+        sessionsByPlayer.remove(holder.viewerId(), holder);
+        locks.remove(holder.backpackId(), holder.viewerId());
+    }
+
     private void refreshMatchingItems(Player player, UUID backpackId, TierDefinition tier, UUID owner) {
         for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
             ItemStack candidate = player.getInventory().getItem(slot);
@@ -179,5 +252,19 @@ public final class BackpackService {
                 player.getInventory().setItem(slot, candidate);
             }
         }
+    }
+
+    private void fireEventSafely(Event event) {
+        try {
+            Bukkit.getPluginManager().callEvent(event);
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(Level.SEVERE,
+                    "An external listener failed while handling " + event.getEventName() + "; backpack state remains committed.",
+                    exception);
+        }
+    }
+
+    private static String eventId(UUID sessionId, String phase) {
+        return sessionId + ":" + phase;
     }
 }

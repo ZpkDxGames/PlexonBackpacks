@@ -1,23 +1,24 @@
 package com.zpkdxgames.plexonbackpacks.inventory;
 
+import java.util.Arrays;
+import java.util.UUID;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.Arrays;
-import java.util.UUID;
 
 public final class BackpackHolder implements InventoryHolder {
     private final UUID backpackId;
     private final UUID viewerId;
     private final String tierId;
+    private final UUID sessionId;
     private Inventory inventory;
     private int snapshotHash;
 
-    public BackpackHolder(UUID backpackId, UUID viewerId, String tierId) {
+    public BackpackHolder(UUID backpackId, UUID viewerId, String tierId, UUID sessionId) {
         this.backpackId = backpackId;
         this.viewerId = viewerId;
         this.tierId = tierId;
+        this.sessionId = sessionId;
     }
 
     public UUID backpackId() {
@@ -30,6 +31,10 @@ public final class BackpackHolder implements InventoryHolder {
 
     public String tierId() {
         return tierId;
+    }
+
+    public UUID sessionId() {
+        return sessionId;
     }
 
     public void inventory(Inventory inventory) {

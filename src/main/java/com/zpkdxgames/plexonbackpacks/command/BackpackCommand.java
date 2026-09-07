@@ -1,6 +1,7 @@
 package com.zpkdxgames.plexonbackpacks.command;
 
 import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
+import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin.DiagnosticsSnapshot;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
@@ -8,6 +9,11 @@ import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -17,12 +23,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Optional;
-import java.util.UUID;
 
 public final class BackpackCommand implements CommandExecutor, TabCompleter {
     private final PlexonBackpacksPlugin plugin;
@@ -73,6 +73,7 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             case "give" -> give(sender, args);
             case "reload" -> reload(sender);
             case "save" -> save(sender);
+            case "diagnostics" -> diagnostics(sender);
             default -> {
                 messages.sendHelp(sender);
                 yield true;
@@ -233,6 +234,30 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         return true;
     }
 
+    private boolean diagnostics(CommandSender sender) {
+        if (!sender.hasPermission("plexonbackpacks.diagnostics")) {
+            messages.send(sender, "no-permission");
+            return true;
+        }
+        DiagnosticsSnapshot d = plugin.diagnostics();
+        sender.sendMessage("§8§m----------------------------------------");
+        sender.sendMessage("§6PlexonBackpacks Diagnostics §7v" + d.pluginVersion());
+        sender.sendMessage("§7Platform: §f" + d.platformVersion());
+        sender.sendMessage("§7Java: §f" + d.javaVersion());
+        sender.sendMessage("§7Mode: §f" + d.mode());
+        sender.sendMessage("§7Core: §f" + (d.coreInstalled() ? d.corePluginVersion() : "not installed")
+                + " §8(API " + d.coreApiVersion() + ", supported " + d.supportedCoreRange() + ")");
+        sender.sendMessage("§7Module state: §f" + d.moduleState());
+        sender.sendMessage("§7Core detail: §f" + d.coreDetail());
+        sender.sendMessage("§7Tiers: §f" + d.tiers() + " §8| §7Records: §f" + d.backpackRecords());
+        sender.sendMessage("§7Open sessions: §f" + d.openSessions() + " §8| §7Locks: §f" + d.activeLocks());
+        sender.sendMessage("§7CSV compaction threshold: §f" + d.compactionThreshold());
+        sender.sendMessage("§7Public API: §f" + (d.publicApiRegistered() ? "REGISTERED" : "NOT_REGISTERED"));
+        sender.sendMessage("§7Events: §fOPEN / CLOSE / BIND §8(primary-thread)");
+        sender.sendMessage("§8§m----------------------------------------");
+        return true;
+    }
+
     private Optional<ItemStack> heldBackpack(Player player) {
         ItemStack mainHand = player.getInventory().getItemInMainHand();
         if (itemFactory.isBackpack(mainHand)) {
@@ -266,6 +291,9 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             }
             if (sender.hasPermission("plexonbackpacks.save")) {
                 options.add("save");
+            }
+            if (sender.hasPermission("plexonbackpacks.diagnostics")) {
+                options.add("diagnostics");
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("give")) {
             Bukkit.getOnlinePlayers().stream().map(Player::getName).forEach(options::add);

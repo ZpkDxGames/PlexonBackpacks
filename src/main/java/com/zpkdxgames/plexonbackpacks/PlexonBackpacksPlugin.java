@@ -1,7 +1,11 @@
 package com.zpkdxgames.plexonbackpacks;
 
+import com.zpkdxgames.plexonbackpacks.api.PlexonBackpacksAPI;
+import com.zpkdxgames.plexonbackpacks.api.internal.DefaultPlexonBackpacksAPI;
 import com.zpkdxgames.plexonbackpacks.command.BackpackCommand;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
+import com.zpkdxgames.plexonbackpacks.integration.core.CoreBridge;
+import com.zpkdxgames.plexonbackpacks.integration.core.CoreBridgeFactory;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.listener.AdminMenuListener;
 import com.zpkdxgames.plexonbackpacks.listener.BackpackListener;
@@ -10,7 +14,9 @@ import com.zpkdxgames.plexonbackpacks.recipe.RecipeRegistry;
 import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
+import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -23,60 +29,66 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
     private AdminMenuService adminMenuService;
     private RecipeRegistry recipeRegistry;
     private BukkitTask autosaveTask;
+    private CoreBridge coreBridge;
+    private PlexonBackpacksAPI publicApi;
+    private boolean publicApiRegistered;
 
     @Override
     public void onEnable() {
-        saveDefaultConfig();
-        migrateConfigIfNeeded();
-
-        configManager = new ConfigManager(this);
+        coreBridge = CoreBridgeFactory.resolve(this);
         try {
+            coreBridge.registerStarting();
+            saveDefaultConfig();
+            migrateConfigIfNeeded();
+
+            configManager = new ConfigManager(this);
             configManager.reload();
+            messages = new Messages(this);
+            dataStore = new BackpackDataStore(this, configManager);
+            dataStore.load();
+            itemFactory = new BackpackItemFactory(this, configManager);
+            backpackService = new BackpackService(this, configManager, messages, itemFactory, dataStore);
+            adminMenuService = new AdminMenuService(configManager, itemFactory);
+            recipeRegistry = new RecipeRegistry(this, configManager, itemFactory, messages);
+
+            getServer().getPluginManager().registerEvents(
+                    new BackpackListener(backpackService, itemFactory, messages),
+                    this
+            );
+            getServer().getPluginManager().registerEvents(
+                    new AdminMenuListener(configManager, messages, itemFactory, backpackService),
+                    this
+            );
+            getServer().getPluginManager().registerEvents(recipeRegistry, this);
+
+            PluginCommand command = getCommand("backpack");
+            if (command == null) {
+                throw new IllegalStateException("The backpack command is missing from plugin.yml");
+            }
+            BackpackCommand executor = new BackpackCommand(
+                    this,
+                    configManager,
+                    messages,
+                    itemFactory,
+                    backpackService,
+                    adminMenuService
+            );
+            command.setExecutor(executor);
+            command.setTabCompleter(executor);
+
+            recipeRegistry.registerAll();
+            registerPublicApi();
+            restartAutosave();
+            coreBridge.markReady("Backpack storage, sessions, commands, recipes and public API are operational");
+            getLogger().info("PlexonBackpacks " + getPluginMeta().getVersion() + " enabled with "
+                    + configManager.tiers().size() + " tier(s) in " + coreBridge.mode() + " mode.");
         } catch (RuntimeException exception) {
+            if (coreBridge != null) {
+                coreBridge.markFailed("Startup failed: " + exception.getMessage());
+            }
             getLogger().severe("PlexonBackpacks cannot start: " + exception.getMessage());
             getServer().getPluginManager().disablePlugin(this);
-            return;
         }
-
-        messages = new Messages(this);
-        dataStore = new BackpackDataStore(this, configManager);
-        dataStore.load();
-        itemFactory = new BackpackItemFactory(this, configManager);
-        backpackService = new BackpackService(configManager, messages, itemFactory, dataStore);
-        adminMenuService = new AdminMenuService(configManager, itemFactory);
-        recipeRegistry = new RecipeRegistry(this, configManager, itemFactory, messages);
-
-        getServer().getPluginManager().registerEvents(
-                new BackpackListener(backpackService, itemFactory, messages),
-                this
-        );
-        getServer().getPluginManager().registerEvents(
-                new AdminMenuListener(configManager, messages, itemFactory, backpackService),
-                this
-        );
-        getServer().getPluginManager().registerEvents(recipeRegistry, this);
-
-        PluginCommand command = getCommand("backpack");
-        if (command == null) {
-            getLogger().severe("The backpack command is missing from plugin.yml.");
-            getServer().getPluginManager().disablePlugin(this);
-            return;
-        }
-        BackpackCommand executor = new BackpackCommand(
-                this,
-                configManager,
-                messages,
-                itemFactory,
-                backpackService,
-                adminMenuService
-        );
-        command.setExecutor(executor);
-        command.setTabCompleter(executor);
-
-        recipeRegistry.registerAll();
-        restartAutosave();
-        getLogger().info("PlexonBackpacks " + getPluginMeta().getVersion() + " enabled with "
-                + configManager.tiers().size() + " tier(s).");
     }
 
     @Override
@@ -95,6 +107,10 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
         if (dataStore != null) {
             dataStore.flushSync();
         }
+        unregisterPublicApi();
+        if (coreBridge != null) {
+            coreBridge.unregister();
+        }
     }
 
     public boolean reloadPlugin() {
@@ -103,6 +119,7 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
             configManager.reload();
         } catch (RuntimeException exception) {
             getLogger().severe("Could not reload config.yml: " + exception.getMessage());
+            coreBridge.markDegraded("Configuration reload failed: " + exception.getMessage());
             return false;
         }
 
@@ -110,12 +127,56 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
         adminMenuService.reload();
         recipeRegistry.registerAll();
         restartAutosave();
+        coreBridge.markReady("Reload completed; backpack services remain operational");
         return true;
     }
 
     public void saveBackpacksNow() {
         backpackService.snapshotOpenSessions();
         dataStore.saveSync();
+    }
+
+    public DiagnosticsSnapshot diagnostics() {
+        return new DiagnosticsSnapshot(
+                getPluginMeta().getVersion(),
+                Bukkit.getVersion(),
+                System.getProperty("java.version", "unknown"),
+                coreBridge.mode(),
+                coreBridge.installed(),
+                coreBridge.compatible(),
+                coreBridge.pluginVersion(),
+                coreBridge.apiVersion(),
+                CoreBridge.SUPPORTED_API_RANGE,
+                coreBridge.registrationState(),
+                coreBridge.detail(),
+                configManager.tiers().size(),
+                dataStore.records().size(),
+                backpackService.openSessionCount(),
+                backpackService.activeLockCount(),
+                configManager.csvCompactionThresholdUpdates(),
+                publicApiRegistered);
+    }
+
+    private void registerPublicApi() {
+        if (publicApiRegistered) {
+            return;
+        }
+        publicApi = new DefaultPlexonBackpacksAPI(configManager, itemFactory, backpackService);
+        Bukkit.getServicesManager().register(
+                PlexonBackpacksAPI.class,
+                publicApi,
+                this,
+                ServicePriority.Normal);
+        publicApiRegistered = true;
+    }
+
+    private void unregisterPublicApi() {
+        if (!publicApiRegistered || publicApi == null) {
+            return;
+        }
+        Bukkit.getServicesManager().unregister(PlexonBackpacksAPI.class, publicApi);
+        publicApiRegistered = false;
+        publicApi = null;
     }
 
     private void restartAutosave() {
@@ -178,5 +239,26 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
         if (current.equals(previousHash) || current.endsWith("/" + previousHash)) {
             getConfig().set(path, replacementUrl);
         }
+    }
+
+    public record DiagnosticsSnapshot(
+            String pluginVersion,
+            String platformVersion,
+            String javaVersion,
+            String mode,
+            boolean coreInstalled,
+            boolean coreCompatible,
+            String corePluginVersion,
+            String coreApiVersion,
+            String supportedCoreRange,
+            String moduleState,
+            String coreDetail,
+            int tiers,
+            int backpackRecords,
+            int openSessions,
+            int activeLocks,
+            long compactionThreshold,
+            boolean publicApiRegistered
+    ) {
     }
 }
