@@ -1,5 +1,5 @@
 name: PlexonBackpacks
-version: '1.2.0'
+version: '1.2.1'
 main: com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin
 description: Lightweight, tiered backpacks represented by custom player heads.
 author: ZpkDxGames
