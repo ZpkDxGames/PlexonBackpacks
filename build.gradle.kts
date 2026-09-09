@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "com.zpkdxgames"
-version = "1.2.0"
+version = "1.2.1"
 
 repositories {
     maven {
@@ -17,14 +17,14 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.2.build.65-beta")
-    compileOnly("com.zpkdxgames:PlexonCore:1.0.0")
+    compileOnly("io.papermc.paper:paper-api:26.2.build.121-stable")
+    compileOnly("com.zpkdxgames:PlexonCore:2.0.4")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("io.papermc.paper:paper-api:26.2.build.65-beta")
-    testImplementation("com.zpkdxgames:PlexonCore:1.0.0")
+    testImplementation("io.papermc.paper:paper-api:26.2.build.121-stable")
+    testImplementation("com.zpkdxgames:PlexonCore:2.0.4")
 }
 
 java {
