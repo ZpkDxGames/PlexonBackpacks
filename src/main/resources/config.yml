@@ -1,19 +1,20 @@
-# PlexonBackpacks 1.1.0
+# PlexonBackpacks 2.0.0-rc.1
 # MiniMessage formatting: https://docs.papermc.io/adventure/minimessage/format/
 
-config-version: 2
+config-version: 3
 
 settings:
   # When enabled, a crafted backpack binds to the first player who opens it.
   ownership-enabled: true
   bind-on-first-open: true
 
-  # Backpack contents stay in memory. Only changed backpacks are serialized,
-  # then appended to CSV by an asynchronous writer.
-  # 200 ticks = 10 seconds. Set to 0 to disable periodic saves.
+  # Premium storage controls.
+  quick-deposit-enabled: true
+  upgrades-enabled: true
+
+  # Backpack contents stay authoritative in memory. Changed records are encoded
+  # on the primary thread and coalesced for asynchronous disk append.
   autosave-interval-ticks: 200
-  # Compact the append-only CSV after this many superseded rows. Compaction is
-  # asynchronous and uses an atomic file replacement.
   csv-compaction-threshold-updates: 10000
 
   # Automatically unlock configured crafting recipes for players.
@@ -26,45 +27,74 @@ messages:
   held-required: "<prefix><yellow>Hold a Plexon backpack in either hand first."
   invalid-tier: "<prefix><red>Unknown tier <white><tier></white>. Use <white>/backpack tiers</white>."
   invalid-amount: "<prefix><red>The amount must be between 1 and 64."
+  invalid-uuid: "<prefix><red><id></red> is not a valid backpack UUID."
+  uuid-required: "<prefix><yellow>A backpack UUID is required."
   player-not-found: "<prefix><red>Player <white><player></white> is not online."
   gave: "<prefix><green>Gave <white><amount>x <tier></white> to <white><player></white>."
   received: "<prefix><green>You received <white><amount>x <tier></white>."
+  inventory-space: "<prefix><yellow><player> needs <white><amount></white> free inventory slot(s); nothing was dropped."
   admin-gui-given: "<prefix><green>You received one unbound <white><tier></white> backpack."
   author-link: "<prefix><gradient:#f59e0b:#8b5cf6>Created by ZpkDxGames</gradient> <dark_gray>—</dark_gray> <click:open_url:'https://namemc.com/profile/ZpkDxGames.1'><hover:show_text:'<yellow>Open the author profile'><aqua><underlined>View NameMC profile</underlined></aqua></hover></click>"
-  dropped-overflow: "<prefix><yellow>Your inventory was full, so the remaining backpack was dropped at your feet."
   already-open: "<prefix><yellow>You already have a backpack open."
-  in-use: "<prefix><red>That backpack is currently being used by another player."
+  in-use: "<prefix><red>That backpack is currently being used by another session."
   bound: "<prefix><green>This backpack is now bound to you."
   wrong-owner: "<prefix><red>This backpack belongs to <white><owner></white>."
   invalid-backpack: "<prefix><red>This backpack is invalid or its tier no longer exists."
-  cannot-nest: "<prefix><red>Backpacks cannot be stored inside another backpack."
+  missing-state: "<prefix><red>The backpack reference has no authoritative stored state. No empty replacement was created."
+  persistence-failed: "<prefix><red>The storage transaction could not be persisted safely. The operation was stopped."
+  operation-failed: "<prefix><red>The operation could not be completed safely. Check diagnostics/console."
+  protected-interaction: "<prefix><yellow>That inventory interaction is disabled while a backpack is open."
+  cannot-nest: "<prefix><red>Backpacks cannot be stored directly or inside container items within another backpack."
   cannot-place: "<prefix><yellow>Backpack heads cannot be placed as blocks."
   crafted-one-at-a-time: "<prefix><yellow>Backpacks must be crafted one at a time to keep every storage ID unique."
   craft-no-permission: "<prefix><red>You cannot craft that backpack tier."
+  quick-deposit: "<prefix><green>Quick-deposited <white><amount></white> item(s)."
+  quick-deposit-none: "<prefix><gray>No eligible inventory items could be deposited."
+  upgrades-disabled: "<prefix><yellow>Backpack upgrades are disabled."
+  upgrade-open: "<prefix><yellow>Close this backpack before upgrading it."
+  max-tier: "<prefix><aqua>This backpack is already at the maximum tier."
+  economy-unavailable: "<prefix><red>No Vault-compatible economy provider is available for this paid upgrade."
+  upgrade-insufficient: "<prefix><yellow>You need <white><cost></white> for this upgrade."
+  upgrade-charge-failed: "<prefix><red>The economy charge was rejected; the backpack was not changed."
+  upgrade-failed: "<prefix><red>The upgrade was rolled back. Any successful charge was refunded."
+  upgrade-success: "<prefix><green>Upgraded to <white><tier></white> (<white><slots></white> slots) for <white><cost></white>."
+  recover-confirm: "<prefix><yellow>Recovery creates another physical reference to existing state. Run <white>/backpack recover <id> confirm</white> to continue."
+  recover-success: "<prefix><green>Recovered a reference to backpack <white><id></white>."
+  recover-failed: "<prefix><red>Backpack <white><id></white> cannot be recovered (missing state or active session)."
+  repair-success: "<prefix><green>Refreshed this item's metadata from authoritative backpack state."
+  repair-failed: "<prefix><red>Metadata repair was refused because its UUID could not be proven against stored state."
+  force-close-success: "<prefix><green>Backpack <white><id></white> has no remaining authoritative session."
+  force-close-failed: "<prefix><red>Backpack <white><id></white> could not be safely force-closed; state remains locked."
   reloaded: "<prefix><green>Configuration and recipes reloaded."
   reload-failed: "<prefix><red>Reload failed. Check the console; the previous tier setup is still active."
-  saved: "<prefix><green>All backpack data has been saved."
+  saved: "<prefix><green>All backpack data has been synchronously saved."
   tiers-header: "<prefix><white>Available tiers:"
   tier-line: "<gray> • <tier> <dark_gray>—</dark_gray> <white><slots> slots"
-  inspect: "<prefix><gray>ID: <white><id></white> | Tier: <tier> <gray>| Owner: <white><owner></white> | Slots: <white><slots></white>"
+  inspect: "<prefix><gray>ID: <white><id></white> | Tier: <white><tier></white> | Owner: <white><owner></white> | Capacity: <white><slots></white> | Session: <white><session></white> | Last access: <white><last></white>"
   help:
-    - "<gradient:#46d3ff:#8b5cf6><bold>PlexonBackpacks</bold></gradient>"
+    - "<gradient:#46d3ff:#8b5cf6><bold>PlexonBackpacks</bold></gradient> <gray>2.0"
     - "<gray>/backpack <white>— Open the backpack in your hand"
+    - "<gray>/backpack upgrade <white>— Upgrade the backpack in your hand"
     - "<gray>/backpack tiers <white>— List configured tiers"
-    - "<gray>/backpack inspect <white>— Inspect the backpack in your hand"
-    - "<gray>/backpack gui <white>— Open the OP/admin giver GUI"
+    - "<gray>/backpack inspect [uuid] <white>— Inspect backpack state"
+    - "<gray>/backpack gui <white>— Open the admin giver GUI"
     - "<gray>/backpack give <player> <tier> [amount] <white>— Admin give"
-    - "<gray>/backpack reload <white>— Reload configuration"
-    - "<gray>/backpack save <white>— Save all data now"
+    - "<gray>/backpack recover <uuid> confirm <white>— Recover an existing reference"
+    - "<gray>/backpack repair <white>— Repair held item metadata from stored UUID"
+    - "<gray>/backpack forceclose <uuid> <white>— Close a stale/active session"
+    - "<gray>/backpack diagnostics <white>— Publication/storage diagnostics"
+    - "<gray>/backpack reload|save <white>— Administration"
 
+# Tiers stay ordered. An upgrade moves only to the next configured tier.
+# `upgrade-cost` is the price to upgrade INTO this tier. Vault/TheosisEconomy is
+# authoritative when a non-zero cost is configured. PlexonBackpacks has no balance.
 # Each tier needs 9–54 slots in multiples of nine.
-# Texture accepts a textures.minecraft.net hash, full URL, or a base64 texture value.
-# Set permission to "" when everyone may use the tier.
 tiers:
   basic:
     display-name: "<gradient:#d69b62:#8b5a2b><bold>Basic Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Basic Backpack"
     slots: 9
+    upgrade-cost: 0
     texture: "http://textures.minecraft.net/texture/8351e505989838e27287e7afbc7f97e796cab5f3598a76160c131c940d0c5"
     custom-model-data: 1001
     permission: ""
@@ -76,112 +106,61 @@ tiers:
       - "<yellow>Right-click to open"
     recipe:
       enabled: true
-      shape:
-        - "LSL"
-        - "LCL"
-        - "LLL"
-      ingredients:
-        L: LEATHER
-        S: STRING
-        C: CHEST
+      shape: ["LSL", "LCL", "LLL"]
+      ingredients: {L: LEATHER, S: STRING, C: CHEST}
 
   iron:
     display-name: "<gradient:#f5f5f5:#8f9aa6><bold>Iron Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Iron Backpack"
     slots: 18
+    upgrade-cost: 5000
     texture: "http://textures.minecraft.net/texture/ebdf8d53bdb932c223c627bbb8c1e0c5e351a616cd8056929c66e6dce44433db"
     custom-model-data: 1002
     permission: ""
-    lore:
-      - "<gray>Tier: <white><tier>"
-      - "<gray>Capacity: <white><slots> slots"
-      - "<gray>Owner: <white><owner>"
-      - ""
-      - "<yellow>Right-click to open"
+    lore: ["<gray>Tier: <white><tier>", "<gray>Capacity: <white><slots> slots", "<gray>Owner: <white><owner>", "", "<yellow>Right-click to open"]
     recipe:
       enabled: true
-      shape:
-        - "ISI"
-        - "ICI"
-        - "ILI"
-      ingredients:
-        I: IRON_INGOT
-        S: STRING
-        C: CHEST
-        L: LEATHER
+      shape: ["ISI", "ICI", "ILI"]
+      ingredients: {I: IRON_INGOT, S: STRING, C: CHEST, L: LEATHER}
 
   gold:
     display-name: "<gradient:#fff176:#f59e0b><bold>Gold Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Gold Backpack"
     slots: 27
+    upgrade-cost: 15000
     texture: "http://textures.minecraft.net/texture/a37a35522f67b2af92345592846b702b9afb9d7c8dbad5ea150673c9e44de3"
     custom-model-data: 1003
     permission: ""
-    lore:
-      - "<gray>Tier: <white><tier>"
-      - "<gray>Capacity: <white><slots> slots"
-      - "<gray>Owner: <white><owner>"
-      - ""
-      - "<yellow>Right-click to open"
+    lore: ["<gray>Tier: <white><tier>", "<gray>Capacity: <white><slots> slots", "<gray>Owner: <white><owner>", "", "<yellow>Right-click to open"]
     recipe:
       enabled: true
-      shape:
-        - "GSG"
-        - "GCG"
-        - "GLG"
-      ingredients:
-        G: GOLD_INGOT
-        S: STRING
-        C: CHEST
-        L: LEATHER
+      shape: ["GSG", "GCG", "GLG"]
+      ingredients: {G: GOLD_INGOT, S: STRING, C: CHEST, L: LEATHER}
 
   diamond:
     display-name: "<gradient:#67e8f9:#06b6d4><bold>Diamond Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Diamond Backpack"
     slots: 36
+    upgrade-cost: 35000
     texture: "http://textures.minecraft.net/texture/df70fab3246fe027ce0bba885a73c6e82d8ff8f358231e8461f956560cfa58f"
     custom-model-data: 1004
     permission: ""
-    lore:
-      - "<gray>Tier: <white><tier>"
-      - "<gray>Capacity: <white><slots> slots"
-      - "<gray>Owner: <white><owner>"
-      - ""
-      - "<yellow>Right-click to open"
+    lore: ["<gray>Tier: <white><tier>", "<gray>Capacity: <white><slots> slots", "<gray>Owner: <white><owner>", "", "<yellow>Right-click to open"]
     recipe:
       enabled: true
-      shape:
-        - "DSD"
-        - "DCD"
-        - "DLD"
-      ingredients:
-        D: DIAMOND
-        S: STRING
-        C: CHEST
-        L: LEATHER
+      shape: ["DSD", "DCD", "DLD"]
+      ingredients: {D: DIAMOND, S: STRING, C: CHEST, L: LEATHER}
 
   netherite:
     display-name: "<gradient:#a78bfa:#4c1d95><bold>Netherite Backpack</bold></gradient>"
     inventory-title: "<dark_gray>Netherite Backpack"
     slots: 54
+    upgrade-cost: 75000
     texture: "http://textures.minecraft.net/texture/a9ab1fdcbe878d1e55bdd43cebc5e43836a6da69541f4a233fe88f1305668"
     custom-model-data: 1005
     permission: ""
-    lore:
-      - "<gray>Tier: <white><tier>"
-      - "<gray>Capacity: <white><slots> slots"
-      - "<gray>Owner: <white><owner>"
-      - ""
-      - "<yellow>Right-click to open"
+    lore: ["<gray>Tier: <white><tier>", "<gray>Capacity: <white><slots> slots", "<gray>Owner: <white><owner>", "", "<yellow>Right-click to open"]
     recipe:
       enabled: true
-      shape:
-        - "NSN"
-        - "ECE"
-        - "NLN"
-      ingredients:
-        N: NETHERITE_INGOT
-        E: ENDER_CHEST
-        S: STRING
-        C: CHEST
-        L: LEATHER
+      shape: ["NSN", "ECE", "NLN"]
+      ingredients: {N: NETHERITE_INGOT, E: ENDER_CHEST, S: STRING, C: CHEST, L: LEATHER}
