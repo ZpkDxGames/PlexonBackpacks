@@ -5,11 +5,11 @@ import com.zpkdxgames.plexonbackpacks.api.BackpackView;
 import com.zpkdxgames.plexonbackpacks.api.PlexonBackpacksAPI;
 import com.zpkdxgames.plexonbackpacks.api.TierView;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
-import com.zpkdxgames.plexonbackpacks.inventory.BackpackHolder;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
+import com.zpkdxgames.plexonbackpacks.service.SessionRegistry;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
@@ -72,7 +72,7 @@ public final class DefaultPlexonBackpacksAPI implements PlexonBackpacksAPI {
         if (playerId == null) {
             return Optional.empty();
         }
-        return service.session(playerId).map(this::sessionView);
+        return service.authoritativeSessionForPlayer(playerId).map(this::sessionView);
     }
 
     @Override
@@ -80,7 +80,7 @@ public final class DefaultPlexonBackpacksAPI implements PlexonBackpacksAPI {
         if (backpackId == null) {
             return Optional.empty();
         }
-        return service.sessionByBackpack(backpackId).map(this::sessionView);
+        return service.authoritativeSession(backpackId).map(this::sessionView);
     }
 
     @Override
@@ -112,12 +112,12 @@ public final class DefaultPlexonBackpacksAPI implements PlexonBackpacksAPI {
                 size);
     }
 
-    private BackpackSessionView sessionView(BackpackHolder holder) {
+    private BackpackSessionView sessionView(SessionRegistry.Session session) {
         return new BackpackSessionView(
-                holder.viewerId(),
-                holder.backpackId(),
-                holder.tierId(),
-                holder.sessionId());
+                session.playerId(),
+                session.backpackId(),
+                service.record(session.backpackId()).map(BackpackRecord::tierId).orElse("unknown"),
+                session.sessionId());
     }
 
     private static void requirePrimaryThread(String operation) {
