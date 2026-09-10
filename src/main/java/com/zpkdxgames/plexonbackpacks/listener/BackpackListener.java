@@ -84,7 +84,7 @@ public final class BackpackListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
-        if (event.getInventory().getHolder(false) instanceof BackpackHolder holder) {
+        if (event.getInventory().getHolder() instanceof BackpackHolder holder) {
             service.close(holder, event.getInventory());
         }
     }
@@ -92,7 +92,7 @@ public final class BackpackListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onClick(InventoryClickEvent event) {
         Inventory top = event.getView().getTopInventory();
-        if (!(top.getHolder(false) instanceof BackpackHolder holder)) {
+        if (!(top.getHolder() instanceof BackpackHolder holder)) {
             return;
         }
 
@@ -141,7 +141,7 @@ public final class BackpackListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onDrag(InventoryDragEvent event) {
         Inventory top = event.getView().getTopInventory();
-        if (!(top.getHolder(false) instanceof BackpackHolder holder)) {
+        if (!(top.getHolder() instanceof BackpackHolder holder)) {
             return;
         }
         boolean touchesTop = event.getRawSlots().stream().anyMatch(slot -> slot >= 0 && slot < top.getSize());
