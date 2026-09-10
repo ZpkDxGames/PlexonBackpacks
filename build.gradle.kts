@@ -19,14 +19,16 @@ repositories {
 }
 
 dependencies {
+    // Production compilation remains pinned to the PlexonCraft Paper target.
     compileOnly("io.papermc.paper:paper-api:26.2.build.121-stable")
     compileOnly("com.zpkdxgames:PlexonCore:2.0.4")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("io.papermc.paper:paper-api:26.2.build.121-stable")
     testImplementation("com.zpkdxgames:PlexonCore:2.0.4")
+    // Do not separately pin Paper on the test runtime: MockBukkit declares the
+    // exact Paper revision it was built against and must remain binary-aligned.
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.2:4.116.1")
 }
 
