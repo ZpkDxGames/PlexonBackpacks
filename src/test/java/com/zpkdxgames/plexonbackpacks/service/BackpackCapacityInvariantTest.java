@@ -12,12 +12,25 @@ import java.util.Map;
 import java.util.UUID;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockbukkit.mockbukkit.MockBukkit;
 
 class BackpackCapacityInvariantTest {
     private static final TierDefinition BASIC = new TierDefinition(
             "basic", "Basic", "Basic", List.of(), 9, "", null, "", 0.0D,
             new RecipeDefinition(false, List.of(), Map.of()));
+
+    @BeforeEach
+    void setUp() {
+        MockBukkit.mock();
+    }
+
+    @AfterEach
+    void tearDown() {
+        MockBukkit.unmock();
+    }
 
     @Test
     void nullOnlyLegacyTailDoesNotIncreaseAuthoritativeCapacity() {
