@@ -111,6 +111,13 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
     }
 
     public boolean reloadPlugin() {
+        backpackService.closeAll();
+        if (backpackService.openSessionCount() != 0 || backpackService.activeLockCount() != 0) {
+            getLogger().severe("Reload aborted because one or more authoritative backpack sessions could not be safely closed.");
+            coreBridge.markDegraded("Configuration reload blocked by an uncommitted backpack custody session");
+            return false;
+        }
+
         reloadConfig();
         try {
             configManager.reload();
@@ -120,11 +127,10 @@ public final class PlexonBackpacksPlugin extends JavaPlugin {
             return false;
         }
 
-        backpackService.closeAll();
         adminMenuService.reload();
         recipeRegistry.registerAll();
         restartAutosave();
-        coreBridge.markReady("Reload completed; backpack services remain operational");
+        coreBridge.markReady("Reload completed after all authoritative backpack sessions were durably closed");
         return true;
     }
 
