@@ -23,7 +23,7 @@ import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
-public final class PlexonBackpacksPlugin extends JavaPlugin {
+public class PlexonBackpacksPlugin extends JavaPlugin {
     private ConfigManager configManager;
     private Messages messages;
     private BackpackDataStore dataStore;
