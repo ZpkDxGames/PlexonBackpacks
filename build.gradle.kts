@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "com.zpkdxgames"
-version = "1.2.1"
+version = "2.0.0-rc.1"
 
 repositories {
     maven {
@@ -25,6 +25,7 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("io.papermc.paper:paper-api:26.2.build.121-stable")
     testImplementation("com.zpkdxgames:PlexonCore:2.0.4")
+    testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.2:4.116.1")
 }
 
 java {
