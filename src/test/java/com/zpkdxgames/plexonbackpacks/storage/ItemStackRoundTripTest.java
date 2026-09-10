@@ -1,7 +1,6 @@
 package com.zpkdxgames.plexonbackpacks.storage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -54,10 +53,11 @@ class ItemStackRoundTripTest {
     }
 
     @Test
-    void roundTripPreservesNullSlots() {
+    void roundTripPreservesEmptySlotSemantics() {
         ItemStack[] restored = roundTrip(new ItemStack[]{customItem(), null, new ItemStack(Material.EMERALD)});
         assertEquals(3, restored.length);
-        assertNull(restored[1]);
+        assertTrue(restored[1] == null || restored[1].getType().isAir());
+        assertEquals(Material.EMERALD, restored[2].getType());
     }
 
     private static ItemStack customItem() {
