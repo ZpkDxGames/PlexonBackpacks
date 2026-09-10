@@ -21,6 +21,7 @@ public interface PlexonBackpacksAPI {
     Optional<BackpackView> backpack(UUID backpackId);
     Collection<TierView> tiers();
     Optional<BackpackSessionView> openSession(UUID playerId);
+    Optional<BackpackSessionView> openSessionForBackpack(UUID backpackId);
     ItemStack create(String tierId);
     boolean open(Player player, ItemStack backpack);
 }
