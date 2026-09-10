@@ -11,8 +11,10 @@ import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.bukkit.Bukkit;
@@ -26,12 +28,15 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class BackpackCommand implements CommandExecutor, TabCompleter {
+    private static final long FORCE_CLOSE_CONFIRM_WINDOW_MILLIS = 30_000L;
+
     private final PlexonBackpacksPlugin plugin;
     private final ConfigManager config;
     private final Messages messages;
     private final BackpackItemFactory itemFactory;
     private final BackpackService service;
     private final AdminMenuService adminMenu;
+    private final Map<String, PendingForceClose> pendingForceCloses = new HashMap<>();
 
     public BackpackCommand(
             PlexonBackpacksPlugin plugin,
@@ -262,6 +267,21 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         if (id == null) {
             return true;
         }
+
+        long now = System.currentTimeMillis();
+        pendingForceCloses.entrySet().removeIf(entry -> entry.getValue().expiresAtMillis() < now);
+        String senderKey = confirmationKey(sender);
+        PendingForceClose pending = pendingForceCloses.get(senderKey);
+        boolean explicitConfirm = args.length >= 3 && args[2].equalsIgnoreCase("confirm");
+        if (!explicitConfirm || pending == null || !pending.backpackId().equals(id)
+                || pending.expiresAtMillis() < now) {
+            pendingForceCloses.put(senderKey,
+                    new PendingForceClose(id, now + FORCE_CLOSE_CONFIRM_WINDOW_MILLIS));
+            messages.send(sender, "force-close-confirm", "id", id.toString());
+            return true;
+        }
+
+        pendingForceCloses.remove(senderKey);
         boolean closed = service.forceClose(id);
         messages.send(sender, closed ? "force-close-success" : "force-close-failed", "id", id.toString());
         return true;
@@ -382,6 +402,13 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         }
     }
 
+    private static String confirmationKey(CommandSender sender) {
+        if (sender instanceof Player player) {
+            return "player:" + player.getUniqueId();
+        }
+        return sender.getClass().getName() + ':' + sender.getName();
+    }
+
     private static int freeStorageSlots(Player player) {
         int free = 0;
         for (ItemStack item : player.getInventory().getStorageContents()) {
@@ -428,7 +455,8 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             config.tiers().stream().map(TierDefinition::id).forEach(options::add);
         } else if (args.length == 4 && args[0].equalsIgnoreCase("give")) {
             options.addAll(List.of("1", "2", "4", "8"));
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("recover")) {
+        } else if (args.length == 3 && (args[0].equalsIgnoreCase("recover")
+                || args[0].equalsIgnoreCase("forceclose"))) {
             options.add("confirm");
         }
 
@@ -437,5 +465,8 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
                 .filter(option -> option.toLowerCase(Locale.ROOT).startsWith(prefix))
                 .sorted()
                 .toList();
+    }
+
+    private record PendingForceClose(UUID backpackId, long expiresAtMillis) {
     }
 }
