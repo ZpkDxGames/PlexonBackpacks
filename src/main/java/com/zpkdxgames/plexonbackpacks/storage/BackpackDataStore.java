@@ -3,6 +3,8 @@ package com.zpkdxgames.plexonbackpacks.storage;
 import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
+import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
+import com.zpkdxgames.plexonbackpacks.service.BackpackCapacityInvariant;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -45,6 +47,11 @@ public final class BackpackDataStore {
     public static final int CURRENT_SCHEMA_VERSION = 2;
     private static final String HEADER = "id,tier,owner,created_at_ms,last_access_ms,contents_base64";
 
+    @FunctionalInterface
+    interface ItemStackEncoder {
+        byte[] encode(ItemStack[] contents);
+    }
+
     private record SnapshotRow(UUID id, long sequence, String line) {
     }
 
@@ -53,6 +60,7 @@ public final class BackpackDataStore {
     private final File dataFile;
     private final File legacyDataFile;
     private final File schemaFile;
+    private final ItemStackEncoder itemStackEncoder;
     private final Map<UUID, BackpackRecord> records = new HashMap<>();
     private final Set<UUID> dirtyIds = new LinkedHashSet<>();
     private final Map<UUID, String> latestRows = new ConcurrentHashMap<>();
@@ -68,11 +76,16 @@ public final class BackpackDataStore {
     private volatile String lastFailure = "NONE";
 
     public BackpackDataStore(PlexonBackpacksPlugin plugin, ConfigManager config) {
+        this(plugin, config, ItemStack::serializeItemsAsBytes);
+    }
+
+    BackpackDataStore(PlexonBackpacksPlugin plugin, ConfigManager config, ItemStackEncoder itemStackEncoder) {
         this.plugin = plugin;
         this.config = config;
         this.dataFile = new File(plugin.getDataFolder(), "backpacks-data.csv");
         this.legacyDataFile = new File(plugin.getDataFolder(), "backpacks-data.yml");
         this.schemaFile = new File(plugin.getDataFolder(), "schema-version.txt");
+        this.itemStackEncoder = itemStackEncoder;
     }
 
     public void load() {
@@ -268,7 +281,8 @@ public final class BackpackDataStore {
 
         Path migratedPath = legacyDataFile.toPath().resolveSibling("backpacks-data.migrated.yml");
         try {
-            Files.copy(legacyDataFile.toPath(), migratedPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+            Files.copy(legacyDataFile.toPath(), migratedPath, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
         } catch (IOException exception) {
             plugin.getLogger().warning("CSV migration succeeded, but a convenience migrated YAML copy could not be created: "
                     + exception.getMessage());
@@ -330,23 +344,37 @@ public final class BackpackDataStore {
             return;
         }
         if (!dirtyIds.isEmpty()) {
-            enqueue(captureRows(List.copyOf(dirtyIds)));
+            try {
+                enqueue(captureRows(List.copyOf(dirtyIds)));
+            } catch (RuntimeException exception) {
+                return;
+            }
         }
         startWriterIfNeeded();
     }
 
     public boolean saveSync() {
         Map<UUID, SnapshotRow> rows = new LinkedHashMap<>();
-        mergeRows(rows, captureRows(List.copyOf(dirtyIds)));
+        try {
+            mergeRows(rows, captureRows(List.copyOf(dirtyIds)));
+        } catch (RuntimeException exception) {
+            return false;
+        }
+
         synchronized (queueLock) {
             mergeRows(rows, activeRows);
             mergeRows(rows, pendingRows.getAndSet(null));
         }
+        String failureBeforeWrite = lastFailure;
         boolean success = writeRows(rows);
         if (!success) {
             dirtyIds.addAll(rows.keySet());
+            return false;
         }
-        return success;
+        if (lastFailure.equals(failureBeforeWrite)) {
+            lastFailure = "NONE";
+        }
+        return true;
     }
 
     public boolean flushSync() {
@@ -359,26 +387,34 @@ public final class BackpackDataStore {
         for (UUID id : ids) {
             BackpackRecord record = records.get(id);
             if (record == null) {
-                dirtyIds.remove(id);
                 continue;
             }
             try {
                 long sequence = sequenceCounter.incrementAndGet();
-                String line = encodeRow(record);
-                SnapshotRow row = new SnapshotRow(id, sequence, line);
-                snapshots.put(id, row);
-                latestRows.put(id, line);
-                dirtyIds.remove(id);
+                snapshots.put(id, new SnapshotRow(id, sequence, encodeRow(record)));
             } catch (RuntimeException exception) {
-                lastFailure = "Could not serialize backpack " + id + ": " + exception.getMessage();
+                lastFailure = "Could not serialize authoritative backpack " + id + ": "
+                        + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage());
                 plugin.getLogger().severe(lastFailure);
+                throw new IllegalStateException(lastFailure, exception);
             }
         }
+
+        for (Map.Entry<UUID, SnapshotRow> entry : snapshots.entrySet()) {
+            latestRows.put(entry.getKey(), entry.getValue().line());
+            dirtyIds.remove(entry.getKey());
+        }
+        ids.stream().filter(id -> !records.containsKey(id)).forEach(dirtyIds::remove);
         return snapshots;
     }
 
     private String encodeRow(BackpackRecord record) {
-        byte[] contents = ItemStack.serializeItemsAsBytes(record.contents());
+        TierDefinition tier = config.tier(record.tierId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Cannot persist backpack " + record.id() + " because tier '" + record.tierId() + "' is not configured"));
+        int capacity = BackpackCapacityInvariant.authoritativeCapacity(record, tier);
+        ItemStack[] normalized = BackpackCapacityInvariant.normalize(record.contents(), capacity);
+        byte[] contents = itemStackEncoder.encode(normalized);
         return String.join(",",
                 escapeCsv(record.id().toString()),
                 escapeCsv(record.tierId()),
@@ -495,7 +531,6 @@ public final class BackpackDataStore {
                     writtenSequences.put(row.id(), row.sequence());
                 }
                 journalRows += written.size();
-                lastFailure = "NONE";
 
                 long obsoleteRows = Math.max(0L, journalRows - latestRows.size());
                 if (obsoleteRows >= config.csvCompactionThresholdUpdates()) {
