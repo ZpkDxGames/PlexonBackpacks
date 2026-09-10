@@ -33,6 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class BackpackItemFactory {
+    public static final int CURRENT_ITEM_SCHEMA = 2;
     private static final Pattern TEXTURE_URL_PATTERN =
             Pattern.compile("\"url\"\\s*:\\s*\"(https?://[^\"]+)\"");
 
@@ -41,6 +42,7 @@ public final class BackpackItemFactory {
     private final NamespacedKey backpackIdKey;
     private final NamespacedKey tierKey;
     private final NamespacedKey ownerKey;
+    private final NamespacedKey itemSchemaKey;
     private final Map<String, ResolvableProfile> profileCache = new ConcurrentHashMap<>();
 
     public BackpackItemFactory(PlexonBackpacksPlugin plugin, ConfigManager config) {
@@ -49,6 +51,7 @@ public final class BackpackItemFactory {
         this.backpackIdKey = new NamespacedKey(plugin, "backpack_id");
         this.tierKey = new NamespacedKey(plugin, "tier");
         this.ownerKey = new NamespacedKey(plugin, "owner");
+        this.itemSchemaKey = new NamespacedKey(plugin, "item_schema");
     }
 
     public ItemStack create(TierDefinition tier, UUID owner) {
@@ -113,7 +116,6 @@ public final class BackpackItemFactory {
             ));
         }
         meta.lore(lore);
-
         meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
 
         PersistentDataContainer data = meta.getPersistentDataContainer();
@@ -121,9 +123,11 @@ public final class BackpackItemFactory {
             data.remove(backpackIdKey);
             data.remove(tierKey);
             data.remove(ownerKey);
+            data.remove(itemSchemaKey);
         } else {
             data.set(backpackIdKey, PersistentDataType.STRING, id.toString());
             data.set(tierKey, PersistentDataType.STRING, tier.id());
+            data.set(itemSchemaKey, PersistentDataType.INTEGER, CURRENT_ITEM_SCHEMA);
             if (owner == null) {
                 data.remove(ownerKey);
             } else {
@@ -204,6 +208,19 @@ public final class BackpackItemFactory {
 
     public boolean isBackpack(ItemStack item) {
         return backpackId(item).isPresent() && tierId(item).isPresent();
+    }
+
+    public boolean hasCurrentSchema(ItemStack item) {
+        return itemSchema(item) == CURRENT_ITEM_SCHEMA;
+    }
+
+    public int itemSchema(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) {
+            return 0;
+        }
+        Integer value = item.getItemMeta().getPersistentDataContainer()
+                .get(itemSchemaKey, PersistentDataType.INTEGER);
+        return value == null ? 0 : value;
     }
 
     public Optional<UUID> backpackId(ItemStack item) {
