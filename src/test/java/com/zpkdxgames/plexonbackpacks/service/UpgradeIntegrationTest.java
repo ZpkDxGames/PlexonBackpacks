@@ -95,11 +95,11 @@ class UpgradeIntegrationTest {
 
     @Test
     void persistenceFailureRollsBackTierAndRefundsEconomy() throws Exception {
-        Path dataFile = plugin.getDataFolder().toPath().resolve("backpacks-data.csv");
-        Assumptions.assumeTrue(Files.getFileStore(dataFile).supportsFileAttributeView("posix"));
         Player player = server.addPlayer();
         ItemStack reference = createAndHold(player, "basic");
         UUID id = itemFactory.backpackId(reference).orElseThrow();
+        Path dataFile = plugin.getDataFolder().toPath().resolve("backpacks-data.csv");
+        Assumptions.assumeTrue(Files.getFileStore(dataFile).supportsFileAttributeView("posix"));
         double before = economy.balance;
         Set<PosixFilePermission> original = Files.getPosixFilePermissions(dataFile);
         try {
