@@ -15,6 +15,7 @@ import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -38,7 +39,9 @@ public final class BackpackService {
     private final EconomyGateway economy;
     private final SessionRegistry sessionRegistry = new SessionRegistry();
     private final Map<UUID, BackpackHolder> holdersByPlayer = new HashMap<>();
+    private final Map<UUID, DeferredForceClose> deferredForceCloses = new HashMap<>();
     private final BackpackGuiRenderer guiRenderer;
+    private String lastForceCloseDiagnostic = "NONE";
 
     public BackpackService(
             PlexonBackpacksPlugin plugin,
@@ -208,6 +211,10 @@ public final class BackpackService {
 
     public boolean close(BackpackHolder holder, Inventory inventory) {
         requirePrimaryThread("close");
+        DeferredForceClose deferred = deferredForceCloses.get(holder.sessionId());
+        if (deferred != null) {
+            deferred.closeEventObserved = true;
+        }
         BackpackHolder active = holdersByPlayer.get(holder.viewerId());
         if (active != holder) {
             return false;
@@ -227,22 +234,11 @@ public final class BackpackService {
                     + " remains session-locked because close persistence failed.");
             return false;
         }
-
-        holdersByPlayer.remove(holder.viewerId(), holder);
-        sessionRegistry.releaseByPlayer(holder.viewerId(), holder.sessionId());
-        BackpackRecord record = dataStore.find(holder.backpackId()).orElse(null);
-        Player player = Bukkit.getPlayer(holder.viewerId());
-        if (record != null && player != null) {
-            fireEventSafely(new PlexonBackpackClosedEvent(
-                    player,
-                    record.id(),
-                    record.tierId(),
-                    record.owner(),
-                    true,
-                    eventId(holder.sessionId(), "close"),
-                    holder.sessionId()));
+        if (deferred != null) {
+            deferred.persistenceSucceeded = true;
+            return true;
         }
-        return true;
+        return finishSessionRelease(holder);
     }
 
     public boolean changePage(BackpackHolder holder, int targetPage) {
@@ -464,24 +460,70 @@ public final class BackpackService {
         requirePrimaryThread("force close");
         SessionRegistry.Session session = sessionRegistry.byBackpack(backpackId).orElse(null);
         if (session == null) {
-            return true;
+            return forceCloseOutcome(true, "NO_ACTIVE_SESSION", backpackId,
+                    "No authoritative session remained; force-close is idempotently complete.");
         }
-        BackpackHolder holder = holdersByPlayer.get(session.playerId());
-        if (holder == null) {
-            SessionRegistry.Session released = sessionRegistry.forceReleaseBackpack(backpackId).orElse(null);
-            if (released != null) {
-                plugin.getLogger().warning("Released stale session registry entry " + released.sessionId()
-                        + " for backpack " + backpackId + "; no live inventory holder existed.");
-                return true;
+
+        BackpackHolder indexedHolder = holdersByPlayer.get(session.playerId());
+        if (indexedHolder != null && !matchesSession(indexedHolder, session)) {
+            return forceCloseOutcome(false, "FAILED_INDEX_IDENTITY_MISMATCH", backpackId,
+                    "The indexed holder does not match the authoritative session identity; registry lock retained.");
+        }
+
+        List<LiveBackpackView> liveViews = findLiveBackpackViews(backpackId);
+        List<LiveBackpackView> authoritativeViews = new ArrayList<>();
+        for (LiveBackpackView view : liveViews) {
+            if (!matchesSession(view.holder(), session)
+                    || !view.player().getUniqueId().equals(session.playerId())) {
+                return forceCloseOutcome(false, "FAILED_AMBIGUOUS_LIVE_VIEW", backpackId,
+                        "A live BackpackHolder with the same backpack UUID does not match the authoritative session; "
+                                + "nothing was released.");
             }
-            return false;
+            authoritativeViews.add(view);
         }
-        Player player = Bukkit.getPlayer(session.playerId());
-        if (player != null && player.getOpenInventory().getTopInventory() == holder.getInventory()) {
-            player.closeInventory();
-            return sessionRegistry.byBackpack(backpackId).isEmpty();
+        if (authoritativeViews.size() > 1) {
+            return forceCloseOutcome(false, "FAILED_MULTIPLE_LIVE_VIEWS", backpackId,
+                    "Multiple live views claim the same authoritative session; registry lock retained for recovery.");
         }
-        return close(holder, holder.getInventory());
+
+        LiveBackpackView liveView = authoritativeViews.isEmpty() ? null : authoritativeViews.getFirst();
+        if (indexedHolder != null && liveView != null && indexedHolder != liveView.holder()) {
+            return forceCloseOutcome(false, "FAILED_INDEX_VIEW_MISMATCH", backpackId,
+                    "The indexed holder object differs from the live authoritative holder; registry lock retained.");
+        }
+
+        if (indexedHolder == null && liveView != null) {
+            holdersByPlayer.put(session.playerId(), liveView.holder());
+            indexedHolder = liveView.holder();
+            plugin.getLogger().warning("Rediscovered missing holder index for backpack " + backpackId
+                    + " from live authoritative session " + session.sessionId() + '.');
+        }
+
+        if (liveView != null) {
+            return closeRediscoveredLiveView(session, liveView);
+        }
+
+        if (indexedHolder != null) {
+            boolean closed = close(indexedHolder, indexedHolder.getInventory());
+            return forceCloseOutcome(closed,
+                    closed ? "CLOSED_INDEXED_SESSION" : "FAILED_INDEXED_CLOSE",
+                    backpackId,
+                    closed
+                            ? "Indexed session had no live GUI and was durably closed."
+                            : "Indexed session could not be durably closed; registry lock retained.");
+        }
+
+        SessionRegistry.Session released = sessionRegistry.forceReleaseBackpack(backpackId).orElse(null);
+        return forceCloseOutcome(released != null,
+                released != null ? "STALE_REGISTRY_RELEASED" : "FAILED_STALE_REGISTRY_RELEASE",
+                backpackId,
+                released != null
+                        ? "No live BackpackHolder existed; stale registry ownership was released."
+                        : "Stale registry ownership changed during force-close; no unsafe release was attempted.");
+    }
+
+    public String lastForceCloseDiagnostic() {
+        return lastForceCloseDiagnostic;
     }
 
     public void snapshotOpenSessions() {
@@ -530,6 +572,115 @@ public final class BackpackService {
 
     public String economyProvider() {
         return economy.providerName();
+    }
+
+    private boolean closeRediscoveredLiveView(SessionRegistry.Session session, LiveBackpackView view) {
+        BackpackHolder holder = view.holder();
+        Player player = view.player();
+        UUID backpackId = session.backpackId();
+        if (deferredForceCloses.containsKey(session.sessionId())) {
+            return forceCloseOutcome(false, "FAILED_REENTRANT_FORCE_CLOSE", backpackId,
+                    "A force-close transaction is already active for this session; registry lock retained.");
+        }
+        if (player.getOpenInventory().getTopInventory() != view.inventory()) {
+            return forceCloseOutcome(false, "FAILED_VIEW_CHANGED", backpackId,
+                    "The player's live inventory changed before invalidation; registry lock retained.");
+        }
+
+        ItemStack cursorBefore = cloneItem(player.getItemOnCursor());
+        DeferredForceClose deferred = new DeferredForceClose();
+        deferredForceCloses.put(session.sessionId(), deferred);
+        try {
+            player.closeInventory();
+        } catch (RuntimeException exception) {
+            plugin.getLogger().log(Level.SEVERE,
+                    "Could not invalidate rediscovered live backpack view " + backpackId, exception);
+            return forceCloseOutcome(false, "FAILED_LIVE_CLOSE_EXCEPTION", backpackId,
+                    "Closing the rediscovered live view raised an exception; registry lock retained.");
+        } finally {
+            deferredForceCloses.remove(session.sessionId(), deferred);
+        }
+
+        if (!sameExactItem(cursorBefore, player.getItemOnCursor())) {
+            return forceCloseOutcome(false, "FAILED_CURSOR_CHANGED", backpackId,
+                    "Player cursor changed during forced live-view invalidation; registry lock retained.");
+        }
+        if (!deferred.closeEventObserved) {
+            return forceCloseOutcome(false, "FAILED_CLOSE_EVENT_NOT_OBSERVED", backpackId,
+                    "InventoryCloseEvent was not observed for the rediscovered view; registry lock retained.");
+        }
+        if (!deferred.persistenceSucceeded) {
+            return forceCloseOutcome(false, "FAILED_LIVE_PERSISTENCE", backpackId,
+                    "Live-view custody could not be persisted during close; registry lock retained.");
+        }
+        if (!findLiveBackpackViews(backpackId).isEmpty()) {
+            return forceCloseOutcome(false, "FAILED_VIEW_STILL_OPEN", backpackId,
+                    "A matching live BackpackHolder remains open after invalidation; registry lock retained.");
+        }
+        if (!finishSessionRelease(holder)) {
+            return forceCloseOutcome(false, "FAILED_SESSION_RELEASE", backpackId,
+                    "Live view closed and persisted, but authoritative registry release did not validate.");
+        }
+        return forceCloseOutcome(true, "REDISCOVERED_LIVE_VIEW_CLOSED", backpackId,
+                "Live authoritative GUI was invalidated and persisted before registry ownership was released.");
+    }
+
+    private List<LiveBackpackView> findLiveBackpackViews(UUID backpackId) {
+        List<LiveBackpackView> matches = new ArrayList<>();
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            Inventory top = player.getOpenInventory().getTopInventory();
+            if (top.getHolder() instanceof BackpackHolder holder && holder.backpackId().equals(backpackId)) {
+                matches.add(new LiveBackpackView(player, holder, top));
+            }
+        }
+        return List.copyOf(matches);
+    }
+
+    private static boolean matchesSession(BackpackHolder holder, SessionRegistry.Session session) {
+        return holder.backpackId().equals(session.backpackId())
+                && holder.viewerId().equals(session.playerId())
+                && holder.sessionId().equals(session.sessionId());
+    }
+
+    private boolean finishSessionRelease(BackpackHolder holder) {
+        BackpackHolder active = holdersByPlayer.get(holder.viewerId());
+        SessionRegistry.Session registered = sessionRegistry.byBackpack(holder.backpackId()).orElse(null);
+        if (active != holder || registered == null || !matchesSession(holder, registered)) {
+            plugin.getLogger().severe("Refusing inconsistent session release for backpack " + holder.backpackId());
+            return false;
+        }
+
+        holdersByPlayer.remove(holder.viewerId(), holder);
+        if (sessionRegistry.releaseByPlayer(holder.viewerId(), holder.sessionId()).isEmpty()) {
+            holdersByPlayer.put(holder.viewerId(), holder);
+            plugin.getLogger().severe("Registry release failed after validating holder " + holder.sessionId()
+                    + "; holder index restored.");
+            return false;
+        }
+
+        BackpackRecord record = dataStore.find(holder.backpackId()).orElse(null);
+        Player player = Bukkit.getPlayer(holder.viewerId());
+        if (record != null && player != null) {
+            fireEventSafely(new PlexonBackpackClosedEvent(
+                    player,
+                    record.id(),
+                    record.tierId(),
+                    record.owner(),
+                    true,
+                    eventId(holder.sessionId(), "close"),
+                    holder.sessionId()));
+        }
+        return true;
+    }
+
+    private boolean forceCloseOutcome(boolean success, String code, UUID backpackId, String detail) {
+        lastForceCloseDiagnostic = code + " backpack=" + backpackId + " detail=" + detail;
+        if (success) {
+            plugin.getLogger().info("Force-close " + lastForceCloseDiagnostic);
+        } else {
+            plugin.getLogger().severe("Force-close " + lastForceCloseDiagnostic);
+        }
+        return success;
     }
 
     private boolean isAuthoritative(BackpackHolder holder) {
@@ -591,6 +742,19 @@ public final class BackpackService {
         return BackpackNestingPolicy.containsBackpack(persisted, itemFactory)
                 && persisted != null
                 && persisted.equals(visible);
+    }
+
+    private static boolean sameExactItem(ItemStack left, ItemStack right) {
+        boolean leftEmpty = left == null || left.getType().isAir();
+        boolean rightEmpty = right == null || right.getType().isAir();
+        if (leftEmpty || rightEmpty) {
+            return leftEmpty == rightEmpty;
+        }
+        return left.equals(right);
+    }
+
+    private static ItemStack cloneItem(ItemStack item) {
+        return item == null ? null : item.clone();
     }
 
     private static ItemStack mergeInto(ItemStack[] target, ItemStack source) {
@@ -671,5 +835,13 @@ public final class BackpackService {
 
     private static String eventId(UUID sessionId, String phase) {
         return sessionId + ":" + phase;
+    }
+
+    private record LiveBackpackView(Player player, BackpackHolder holder, Inventory inventory) {
+    }
+
+    private static final class DeferredForceClose {
+        private boolean closeEventObserved;
+        private boolean persistenceSucceeded;
     }
 }
