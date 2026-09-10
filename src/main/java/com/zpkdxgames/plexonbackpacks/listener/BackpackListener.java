@@ -120,11 +120,14 @@ public final class BackpackListener implements Listener {
             return;
         }
 
-        if (clickedTop && BackpackNestingPolicy.containsBackpack(cursor, itemFactory)) {
+        if (clickedTop && BackpackNestingPolicy.containsBackpack(current, itemFactory)) {
+            if (legacyNestedExtractionAllowed(event.getAction(), current, cursor, itemFactory)) {
+                return;
+            }
             cancelNesting(event);
             return;
         }
-        if (clickedTop && BackpackNestingPolicy.containsBackpack(current, itemFactory)) {
+        if (clickedTop && BackpackNestingPolicy.containsBackpack(cursor, itemFactory)) {
             cancelNesting(event);
             return;
         }
@@ -196,6 +199,10 @@ public final class BackpackListener implements Listener {
             return;
         }
         int relative = rawSlot - holder.controlRowStart();
+        if (controlRerenders(relative) && !isEmpty(event.getCursor())) {
+            messages.send(player, "cursor-busy");
+            return;
+        }
         switch (relative) {
             case BackpackLayout.PREVIOUS_SLOT_OFFSET -> service.changePage(holder, holder.page() - 1);
             case BackpackLayout.SORT_SLOT_OFFSET -> {
@@ -216,6 +223,28 @@ public final class BackpackListener implements Listener {
         }
     }
 
+    static boolean legacyNestedExtractionAllowed(
+            InventoryAction action,
+            ItemStack current,
+            ItemStack cursor,
+            BackpackItemFactory itemFactory
+    ) {
+        if (!BackpackNestingPolicy.containsBackpack(current, itemFactory) || !isEmpty(cursor)) {
+            return false;
+        }
+        return switch (action) {
+            case PICKUP_ALL, PICKUP_HALF, PICKUP_ONE, PICKUP_SOME, MOVE_TO_OTHER_INVENTORY -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean controlRerenders(int relative) {
+        return relative == BackpackLayout.PREVIOUS_SLOT_OFFSET
+                || relative == BackpackLayout.SORT_SLOT_OFFSET
+                || relative == BackpackLayout.QUICK_DEPOSIT_SLOT_OFFSET
+                || relative == BackpackLayout.NEXT_SLOT_OFFSET;
+    }
+
     private boolean isActiveBackpack(BackpackHolder holder, ItemStack item) {
         Optional<UUID> id = itemFactory.backpackId(item);
         return id.filter(holder.backpackId()::equals).isPresent();
@@ -224,5 +253,9 @@ public final class BackpackListener implements Listener {
     private void cancelNesting(InventoryClickEvent event) {
         event.setCancelled(true);
         messages.send(event.getWhoClicked(), "cannot-nest");
+    }
+
+    private static boolean isEmpty(ItemStack item) {
+        return item == null || item.getType().isAir();
     }
 }
