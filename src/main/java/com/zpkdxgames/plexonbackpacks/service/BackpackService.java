@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Level;
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.inventory.Inventory;
@@ -596,22 +597,46 @@ public final class BackpackService {
         }
 
         ItemStack cursorBefore = cloneItem(player.getItemOnCursor());
+        boolean hasCursor = cursorBefore != null && !cursorBefore.getType().isAir();
         DeferredForceClose deferred = new DeferredForceClose();
         deferredForceCloses.put(session.sessionId(), deferred);
+        RuntimeException closeFailure = null;
+        RuntimeException cursorRestoreFailure = null;
         try {
+            if (hasCursor) {
+                player.setItemOnCursor(new ItemStack(Material.AIR));
+            }
             player.closeInventory();
         } catch (RuntimeException exception) {
-            plugin.getLogger().log(Level.SEVERE,
-                    "Could not invalidate rediscovered live backpack view " + backpackId, exception);
-            return forceCloseOutcome(false, "FAILED_LIVE_CLOSE_EXCEPTION", backpackId,
-                    "Closing the rediscovered live view raised an exception; registry lock retained.");
+            closeFailure = exception;
         } finally {
             deferredForceCloses.remove(session.sessionId(), deferred);
+            if (hasCursor) {
+                try {
+                    player.setItemOnCursor(cursorBefore.clone());
+                } catch (RuntimeException exception) {
+                    cursorRestoreFailure = exception;
+                }
+            }
         }
 
+        if (closeFailure != null) {
+            plugin.getLogger().log(Level.SEVERE,
+                    "Could not invalidate rediscovered live backpack view " + backpackId, closeFailure);
+            return forceCloseOutcome(false, "FAILED_LIVE_CLOSE_EXCEPTION", backpackId,
+                    "Closing the rediscovered live view raised an exception; cursor restoration was attempted and "
+                            + "the registry lock was retained.");
+        }
+        if (cursorRestoreFailure != null) {
+            plugin.getLogger().log(Level.SEVERE,
+                    "CRITICAL: Could not restore cursor after rediscovered live backpack close " + backpackId,
+                    cursorRestoreFailure);
+            return forceCloseOutcome(false, "FAILED_CURSOR_RESTORE_EXCEPTION", backpackId,
+                    "Exact cursor restoration raised an exception; registry lock retained for manual recovery.");
+        }
         if (!sameExactItem(cursorBefore, player.getItemOnCursor())) {
             return forceCloseOutcome(false, "FAILED_CURSOR_CHANGED", backpackId,
-                    "Player cursor changed during forced live-view invalidation; registry lock retained.");
+                    "Player cursor did not exactly match its pre-close ItemStack after restoration; registry lock retained.");
         }
         if (!deferred.closeEventObserved) {
             return forceCloseOutcome(false, "FAILED_CLOSE_EVENT_NOT_OBSERVED", backpackId,
@@ -630,7 +655,8 @@ public final class BackpackService {
                     "Live view closed and persisted, but authoritative registry release did not validate.");
         }
         return forceCloseOutcome(true, "REDISCOVERED_LIVE_VIEW_CLOSED", backpackId,
-                "Live authoritative GUI was invalidated and persisted before registry ownership was released.");
+                "Live authoritative GUI was invalidated, cursor custody restored, and persistence completed before "
+                        + "registry ownership was released.");
     }
 
     private List<LiveBackpackView> findLiveBackpackViews(UUID backpackId) {
