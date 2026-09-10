@@ -70,17 +70,23 @@ public final class AdminMenuListener implements Listener {
             messages.send(player, "invalid-tier", "tier", tierId);
             return;
         }
-
-        ItemStack backpack = backpackService.createBackpack(tier);
-        if (!player.getInventory().addItem(backpack).isEmpty()) {
-            player.getWorld().dropItemNaturally(player.getLocation(), backpack);
-            messages.send(player, "dropped-overflow");
+        if (player.getInventory().firstEmpty() < 0) {
+            messages.send(player, "inventory-space", "player", player.getName(), "amount", "1");
+            return;
         }
-        messages.send(
-                player,
-                "admin-gui-given",
-                "tier", itemFactory.plainTierName(tier)
-        );
+
+        ItemStack backpack;
+        try {
+            backpack = backpackService.createBackpack(tier);
+        } catch (RuntimeException exception) {
+            messages.send(player, "persistence-failed");
+            return;
+        }
+        if (!player.getInventory().addItem(backpack).isEmpty()) {
+            messages.send(player, "operation-failed");
+            return;
+        }
+        messages.send(player, "admin-gui-given", "tier", itemFactory.plainTierName(tier));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
