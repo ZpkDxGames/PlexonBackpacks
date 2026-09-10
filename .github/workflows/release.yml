@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - v1.2.1
+      - v2.0.0-rc.1
 
 permissions:
   contents: write
@@ -37,22 +37,29 @@ jobs:
       - name: Verify release payload
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-1.2.1.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
           test -f "$JAR"
-          unzip -p "$JAR" plugin.yml | grep -F "version: '1.2.1'"
+          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.1'"
+          jar tf "$JAR" | grep -F 'com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class'
           if jar tf "$JAR" | grep -q '^com/zpkdxgames/plexoncore/'; then
             echo "PlexonCore classes were shaded into PlexonBackpacks" >&2
+            exit 1
+          fi
+          if jar tf "$JAR" | grep -q '^net/milkbowl/vault/'; then
+            echo "Vault classes were shaded into PlexonBackpacks" >&2
             exit 1
           fi
           sha256sum "$JAR" > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            build/libs/PlexonBackpacks-1.2.1.jar \
+            build/libs/PlexonBackpacks-2.0.0-rc.1.jar \
             SHA256SUMS.txt \
-            --title "PlexonBackpacks 1.2.1" \
-            --notes-file .release/RELEASE_NOTES_1.2.1.md
+            --verify-tag \
+            --prerelease \
+            --title "PlexonBackpacks 2.0.0-rc.1" \
+            --notes-file .release/RELEASE_NOTES_2.0.0-rc.1.md
