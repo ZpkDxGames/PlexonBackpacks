@@ -76,6 +76,14 @@ public final class DefaultPlexonBackpacksAPI implements PlexonBackpacksAPI {
     }
 
     @Override
+    public Optional<BackpackSessionView> openSessionForBackpack(UUID backpackId) {
+        if (backpackId == null) {
+            return Optional.empty();
+        }
+        return service.sessionByBackpack(backpackId).map(this::sessionView);
+    }
+
+    @Override
     public ItemStack create(String tierId) {
         requirePrimaryThread("create");
         TierDefinition tier = config.tier(tierId)
