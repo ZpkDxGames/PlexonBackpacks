@@ -558,6 +558,14 @@ public final class BackpackService {
                 .map(holdersByPlayer::get);
     }
 
+    public Optional<SessionRegistry.Session> authoritativeSessionForPlayer(UUID playerId) {
+        return sessionRegistry.byPlayer(playerId);
+    }
+
+    public Optional<SessionRegistry.Session> authoritativeSession(UUID backpackId) {
+        return sessionRegistry.byBackpack(backpackId);
+    }
+
     public Optional<BackpackRecord> record(UUID backpackId) {
         return dataStore.find(backpackId);
     }
@@ -629,6 +637,9 @@ public final class BackpackService {
         List<LiveBackpackView> matches = new ArrayList<>();
         for (Player player : Bukkit.getOnlinePlayers()) {
             Inventory top = player.getOpenInventory().getTopInventory();
+            if (top == null) {
+                continue;
+            }
             if (top.getHolder() instanceof BackpackHolder holder && holder.backpackId().equals(backpackId)) {
                 matches.add(new LiveBackpackView(player, holder, top));
             }
