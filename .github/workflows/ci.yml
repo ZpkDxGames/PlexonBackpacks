@@ -14,10 +14,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout exact candidate head
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Java 25
         uses: actions/setup-java@v5
@@ -52,7 +53,7 @@ jobs:
               raise SystemExit(1)
           PY
 
-      - name: Verify release JAR
+      - name: Verify release JAR and isolation
         run: |
           set -euo pipefail
           JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
@@ -67,7 +68,20 @@ jobs:
             echo "Vault classes were shaded into PlexonBackpacks" >&2
             exit 1
           fi
-          git diff --check HEAD^ HEAD
+
+      - name: Verify Java 25 bytecode
+        run: |
+          set -euo pipefail
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
+          javap -verbose -classpath "$JAR" com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin \
+            | grep -F 'major version: 69'
+
+      - name: Verify source whitespace and checksum
+        run: |
+          set -euo pipefail
+          BASE="$(git merge-base HEAD origin/main)"
+          git diff --check "$BASE" HEAD
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
           sha256sum "$JAR" > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
 
