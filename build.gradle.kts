@@ -7,6 +7,9 @@ plugins {
 group = "com.zpkdxgames"
 version = "2.0.0-rc.1"
 
+val productionPaperVersion = "26.2.build.121-stable"
+val mockBukkitPaperVersion = "26.2.build.111-stable"
+
 repositories {
     maven {
         name = "plexonCoreLocal"
@@ -19,17 +22,26 @@ repositories {
 }
 
 dependencies {
-    // Production compilation remains pinned to the PlexonCraft Paper target.
-    compileOnly("io.papermc.paper:paper-api:26.2.build.121-stable")
+    // Production compilation remains pinned to the exact PlexonCraft target.
+    compileOnly("io.papermc.paper:paper-api:$productionPaperVersion")
     compileOnly("com.zpkdxgames:PlexonCore:2.0.4")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("com.zpkdxgames:PlexonCore:2.0.4")
-    // Do not separately pin Paper on the test runtime: MockBukkit declares the
-    // exact Paper revision it was built against and must remain binary-aligned.
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.2:4.116.1")
+    // MockBukkit 4.116.1 was built against Paper 26.2.build.111-stable.
+    // Test-only classpaths are intentionally binary-aligned to that API while
+    // production compileJava remains pinned to build.121 above.
+    testImplementation("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
+}
+
+configurations.named("testCompileClasspath") {
+    resolutionStrategy.force("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
+}
+configurations.named("testRuntimeClasspath") {
+    resolutionStrategy.force("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
 }
 
 java {
