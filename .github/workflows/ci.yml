@@ -4,8 +4,7 @@ on:
   push:
     branches:
       - main
-      - release/1.2.0
-      - agent/1.2.1-core-certification
+      - 'phase2/**'
   pull_request:
 
 permissions:
@@ -37,14 +36,35 @@ jobs:
       - name: Build and test
         run: gradle clean test check jar --no-daemon
 
+      - name: Report test count
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          tests = failures = errors = skipped = 0
+          for path in glob.glob('build/test-results/test/TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              tests += int(root.attrib.get('tests', 0))
+              failures += int(root.attrib.get('failures', 0))
+              errors += int(root.attrib.get('errors', 0))
+              skipped += int(root.attrib.get('skipped', 0))
+          print(f'TEST_COUNT={tests} FAILURES={failures} ERRORS={errors} SKIPPED={skipped}')
+          if failures or errors or tests == 0:
+              raise SystemExit(1)
+          PY
+
       - name: Verify release JAR
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-1.2.1.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
           test -f "$JAR"
-          unzip -p "$JAR" plugin.yml | grep -F "version: '1.2.1'"
+          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.1'"
+          jar tf "$JAR" | grep -F 'com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class'
           if jar tf "$JAR" | grep -q '^com/zpkdxgames/plexoncore/'; then
             echo "PlexonCore classes were shaded into PlexonBackpacks" >&2
+            exit 1
+          fi
+          if jar tf "$JAR" | grep -q '^net/milkbowl/vault/'; then
+            echo "Vault classes were shaded into PlexonBackpacks" >&2
             exit 1
           fi
           git diff --check HEAD^ HEAD
@@ -54,8 +74,8 @@ jobs:
       - name: Upload verified build
         uses: actions/upload-artifact@v4
         with:
-          name: PlexonBackpacks-1.2.1
+          name: PlexonBackpacks-2.0.0-rc.1
           path: |
-            build/libs/PlexonBackpacks-1.2.1.jar
+            build/libs/PlexonBackpacks-2.0.0-rc.1.jar
             SHA256SUMS.txt
           if-no-files-found: error
