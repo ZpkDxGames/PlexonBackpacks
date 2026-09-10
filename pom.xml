@@ -7,16 +7,16 @@
 
     <groupId>com.zpkdxgames</groupId>
     <artifactId>PlexonBackpacks</artifactId>
-    <version>1.2.0</version>
+    <version>2.0.0-rc.1</version>
     <name>PlexonBackpacks</name>
-    <description>Lightweight, tiered backpacks represented by custom player heads.</description>
+    <description>Premium item-safe tiered backpack storage for the Plexon ecosystem.</description>
     <url>https://github.com/ZpkDxGames/PlexonBackpacks</url>
 
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <paper.version>26.2.build.65-beta</paper.version>
-        <plexoncore.version>1.0.0</plexoncore.version>
+        <paper.version>26.2.build.121-stable</paper.version>
+        <plexoncore.version>2.0.4</plexoncore.version>
     </properties>
 
     <repositories>
