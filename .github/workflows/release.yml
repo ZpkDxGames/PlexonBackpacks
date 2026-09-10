@@ -34,7 +34,23 @@ jobs:
       - name: Build and test exact tag
         run: gradle clean test check jar --no-daemon
 
-      - name: Verify release payload
+      - name: Report exact-tag test count
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          tests = failures = errors = skipped = 0
+          for path in glob.glob('build/test-results/test/TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              tests += int(root.attrib.get('tests', 0))
+              failures += int(root.attrib.get('failures', 0))
+              errors += int(root.attrib.get('errors', 0))
+              skipped += int(root.attrib.get('skipped', 0))
+          print(f'TEST_COUNT={tests} FAILURES={failures} ERRORS={errors} SKIPPED={skipped}')
+          if failures or errors or tests == 0:
+              raise SystemExit(1)
+          PY
+
+      - name: Verify release payload and isolation
         run: |
           set -euo pipefail
           JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
@@ -49,6 +65,8 @@ jobs:
             echo "Vault classes were shaded into PlexonBackpacks" >&2
             exit 1
           fi
+          javap -verbose -classpath "$JAR" com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin \
+            | grep -F 'major version: 69'
           sha256sum "$JAR" > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
 
