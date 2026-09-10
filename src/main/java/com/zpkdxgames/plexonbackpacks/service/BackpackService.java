@@ -15,7 +15,6 @@ import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -121,7 +120,7 @@ public final class BackpackService {
             }
         }
 
-        int capacity = record.requiredSize(tier.slots());
+        int capacity = normalizeAuthoritativeCapacity(record, tier);
         UUID sessionId = UUID.randomUUID();
         SessionRegistry.ReservationResult reservation = sessionRegistry.reserve(
                 player.getUniqueId(), backpackId, sessionId);
@@ -251,6 +250,9 @@ public final class BackpackService {
         if (!isAuthoritative(holder) || targetPage < 0 || targetPage >= holder.pageCount()) {
             return false;
         }
+        if (!requireClearCursor(holder)) {
+            return false;
+        }
         syncVisiblePage(holder);
         dataStore.requestSave();
         holder.page(targetPage);
@@ -262,13 +264,13 @@ public final class BackpackService {
 
     public boolean sort(BackpackHolder holder) {
         requirePrimaryThread("sort");
-        if (!isAuthoritative(holder)) {
+        if (!isAuthoritative(holder) || !requireClearCursor(holder)) {
             return false;
         }
         syncVisiblePage(holder);
         BackpackRecord record = dataStore.find(holder.backpackId()).orElseThrow();
-        ItemStack[] before = record.contents();
-        ItemStack[] sorted = new ItemStack[Math.max(holder.capacity(), before.length)];
+        ItemStack[] before = BackpackCapacityInvariant.normalize(record.contents(), holder.capacity());
+        ItemStack[] sorted = new ItemStack[holder.capacity()];
         List<ItemStack> occupied = Arrays.stream(before)
                 .filter(item -> item != null && !item.getType().isAir())
                 .map(ItemStack::clone)
@@ -293,15 +295,15 @@ public final class BackpackService {
     public int quickDeposit(Player player, BackpackHolder holder) {
         requirePrimaryThread("quick deposit");
         if (!config.quickDepositEnabled() || !isAuthoritative(holder)
-                || !holder.viewerId().equals(player.getUniqueId())) {
+                || !holder.viewerId().equals(player.getUniqueId()) || !requireClearCursor(player)) {
             return 0;
         }
 
         syncVisiblePage(holder);
         BackpackRecord record = dataStore.find(holder.backpackId()).orElseThrow();
-        ItemStack[] recordBefore = record.contents();
+        ItemStack[] recordBefore = BackpackCapacityInvariant.normalize(record.contents(), holder.capacity());
         ItemStack[] playerBefore = cloneArray(player.getInventory().getStorageContents());
-        ItemStack[] target = Arrays.copyOf(recordBefore, Math.max(holder.capacity(), recordBefore.length));
+        ItemStack[] target = BackpackCapacityInvariant.normalize(recordBefore, holder.capacity());
         ItemStack[] playerAfter = cloneArray(playerBefore);
         int moved = 0;
 
@@ -368,9 +370,10 @@ public final class BackpackService {
             messages.send(player, "wrong-owner", "owner", itemFactory.ownerName(record.owner()));
             return false;
         }
+        TierDefinition current = config.tier(record.tierId()).orElse(null);
         TierDefinition next = config.nextTier(record.tierId()).orElse(null);
-        if (next == null) {
-            messages.send(player, "max-tier");
+        if (current == null || next == null) {
+            messages.send(player, current == null ? "invalid-backpack" : "max-tier");
             return false;
         }
         if (!next.permission().isBlank() && !player.hasPermission(next.permission())) {
@@ -393,8 +396,12 @@ public final class BackpackService {
         }
 
         String previousTier = record.tierId();
+        int previousCapacity = BackpackCapacityInvariant.authoritativeCapacity(record, current);
+        ItemStack[] previousContents = BackpackCapacityInvariant.normalize(record.contents(), previousCapacity);
         try {
+            int nextCapacity = BackpackCapacityInvariant.authoritativeCapacity(record, next);
             record.tierId(next.id());
+            record.contents(BackpackCapacityInvariant.normalize(previousContents, nextCapacity));
             dataStore.markDirty(record.id());
             if (!dataStore.saveSync()) {
                 throw new IllegalStateException("upgrade persistence commit failed");
@@ -402,11 +409,15 @@ public final class BackpackService {
             refreshMatchingItems(player, record.id(), next, record.owner());
         } catch (RuntimeException exception) {
             record.tierId(previousTier);
+            record.contents(previousContents);
             dataStore.markDirty(record.id());
-            dataStore.saveSync();
+            boolean rollbackPersisted = dataStore.saveSync();
             if (!economy.refund(player.getUniqueId(), cost)) {
                 plugin.getLogger().severe("CRITICAL: Economy refund failed after backpack upgrade rollback for player "
                         + player.getUniqueId() + ", backpack " + record.id() + ", amount " + cost);
+            }
+            if (!rollbackPersisted) {
+                plugin.getLogger().severe("CRITICAL: Backpack upgrade rollback could not be persisted for " + record.id());
             }
             plugin.getLogger().log(Level.SEVERE, "Backpack upgrade rolled back for " + record.id(), exception);
             messages.send(player, "upgrade-failed");
@@ -457,6 +468,12 @@ public final class BackpackService {
         }
         BackpackHolder holder = holdersByPlayer.get(session.playerId());
         if (holder == null) {
+            SessionRegistry.Session released = sessionRegistry.forceReleaseBackpack(backpackId).orElse(null);
+            if (released != null) {
+                plugin.getLogger().warning("Released stale session registry entry " + released.sessionId()
+                        + " for backpack " + backpackId + "; no live inventory holder existed.");
+                return true;
+            }
             return false;
         }
         Player player = Bukkit.getPlayer(session.playerId());
@@ -522,24 +539,58 @@ public final class BackpackService {
                 .isPresent();
     }
 
+    private int normalizeAuthoritativeCapacity(BackpackRecord record, TierDefinition tier) {
+        int capacity = BackpackCapacityInvariant.authoritativeCapacity(record, tier);
+        ItemStack[] current = record.contents();
+        if (!BackpackCapacityInvariant.isNormalized(current, capacity)) {
+            record.contents(BackpackCapacityInvariant.normalize(current, capacity));
+            dataStore.markDirty(record.id());
+        }
+        return capacity;
+    }
+
     private void syncVisiblePage(BackpackHolder holder) {
         BackpackRecord record = dataStore.find(holder.backpackId())
                 .orElseThrow(() -> new IllegalStateException("Authoritative backpack record is missing"));
-        ItemStack[] previous = record.contents();
-        ItemStack[] merged = Arrays.copyOf(previous, Math.max(holder.capacity(), previous.length));
+        ItemStack[] previous = BackpackCapacityInvariant.normalize(record.contents(), holder.capacity());
+        ItemStack[] merged = BackpackCapacityInvariant.normalize(previous, holder.capacity());
         ItemStack[] visible = holder.visibleStorageContents();
         int start = holder.page() * 45;
         for (int guiSlot = 0; guiSlot < visible.length; guiSlot++) {
             ItemStack item = visible[guiSlot];
-            if (BackpackNestingPolicy.containsBackpack(item, itemFactory)) {
-                throw new IllegalStateException("Nested backpack detected in visible storage slot " + guiSlot);
+            int recordSlot = start + guiSlot;
+            ItemStack persisted = previous[recordSlot];
+            if (BackpackNestingPolicy.containsBackpack(item, itemFactory)
+                    && !sameExactLegacyNestedItem(persisted, item)) {
+                throw new IllegalStateException("New nested backpack insertion detected in visible storage slot "
+                        + guiSlot);
             }
-            merged[start + guiSlot] = item == null ? null : item.clone();
+            merged[recordSlot] = item == null ? null : item.clone();
         }
         record.contents(merged);
         record.lastAccess(System.currentTimeMillis());
         dataStore.markDirty(record.id());
         holder.resetSnapshotHash();
+    }
+
+    private boolean requireClearCursor(BackpackHolder holder) {
+        Player player = Bukkit.getPlayer(holder.viewerId());
+        return player != null && requireClearCursor(player);
+    }
+
+    private boolean requireClearCursor(Player player) {
+        ItemStack cursor = player.getItemOnCursor();
+        if (cursor == null || cursor.getType().isAir()) {
+            return true;
+        }
+        messages.send(player, "cursor-busy");
+        return false;
+    }
+
+    private boolean sameExactLegacyNestedItem(ItemStack persisted, ItemStack visible) {
+        return BackpackNestingPolicy.containsBackpack(persisted, itemFactory)
+                && persisted != null
+                && persisted.equals(visible);
     }
 
     private static ItemStack mergeInto(ItemStack[] target, ItemStack source) {
