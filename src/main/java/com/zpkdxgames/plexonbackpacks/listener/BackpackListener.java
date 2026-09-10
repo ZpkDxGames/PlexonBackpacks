@@ -1,16 +1,22 @@
 package com.zpkdxgames.plexonbackpacks.listener;
 
 import com.zpkdxgames.plexonbackpacks.inventory.BackpackHolder;
+import com.zpkdxgames.plexonbackpacks.inventory.BackpackLayout;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
+import com.zpkdxgames.plexonbackpacks.item.BackpackNestingPolicy;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
+import java.util.Optional;
+import java.util.UUID;
+import org.bukkit.entity.Player;
+import org.bukkit.event.Event.Result;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
-import org.bukkit.event.Event.Result;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockDispenseArmorEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -24,19 +30,12 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
-import java.util.Optional;
-import java.util.UUID;
-
 public final class BackpackListener implements Listener {
     private final BackpackService service;
     private final BackpackItemFactory itemFactory;
     private final Messages messages;
 
-    public BackpackListener(
-            BackpackService service,
-            BackpackItemFactory itemFactory,
-            Messages messages
-    ) {
+    public BackpackListener(BackpackService service, BackpackItemFactory itemFactory, Messages messages) {
         this.service = service;
         this.itemFactory = itemFactory;
         this.messages = messages;
@@ -97,7 +96,8 @@ public final class BackpackListener implements Listener {
             return;
         }
 
-        boolean clickedTop = event.getRawSlot() >= 0 && event.getRawSlot() < top.getSize();
+        int rawSlot = event.getRawSlot();
+        boolean clickedTop = rawSlot >= 0 && rawSlot < top.getSize();
         ItemStack current = event.getCurrentItem();
         ItemStack cursor = event.getCursor();
 
@@ -106,26 +106,31 @@ public final class BackpackListener implements Listener {
             return;
         }
 
-        if (clickedTop && itemFactory.isBackpack(cursor)) {
+        if (clickedTop && !BackpackLayout.isStorageGuiSlot(holder.capacity(), holder.page(), rawSlot)) {
+            event.setCancelled(true);
+            handleControl(event, holder, rawSlot);
+            return;
+        }
+
+        if (clickedTop && (event.getClick() == ClickType.NUMBER_KEY
+                || event.getClick() == ClickType.SWAP_OFFHAND
+                || event.getClick() == ClickType.DOUBLE_CLICK)) {
+            event.setCancelled(true);
+            messages.send(event.getWhoClicked(), "protected-interaction");
+            return;
+        }
+
+        if (clickedTop && BackpackNestingPolicy.containsBackpack(cursor, itemFactory)) {
+            cancelNesting(event);
+            return;
+        }
+        if (clickedTop && BackpackNestingPolicy.containsBackpack(current, itemFactory)) {
             cancelNesting(event);
             return;
         }
         if (!clickedTop
                 && event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY
-                && itemFactory.isBackpack(current)) {
-            cancelNesting(event);
-            return;
-        }
-        if (clickedTop && event.getClick() == ClickType.NUMBER_KEY) {
-            int button = event.getHotbarButton();
-            if (button >= 0 && itemFactory.isBackpack(event.getWhoClicked().getInventory().getItem(button))) {
-                cancelNesting(event);
-                return;
-            }
-        }
-        if (clickedTop
-                && event.getClick() == ClickType.SWAP_OFFHAND
-                && itemFactory.isBackpack(event.getWhoClicked().getInventory().getItemInOffHand())) {
+                && BackpackNestingPolicy.containsBackpack(current, itemFactory)) {
             cancelNesting(event);
         }
     }
@@ -136,14 +141,19 @@ public final class BackpackListener implements Listener {
         if (!(top.getHolder(false) instanceof BackpackHolder holder)) {
             return;
         }
-
-        boolean touchesTop = event.getRawSlots().stream().anyMatch(slot -> slot < top.getSize());
+        boolean touchesTop = event.getRawSlots().stream().anyMatch(slot -> slot >= 0 && slot < top.getSize());
         if (!touchesTop) {
             return;
         }
-        if (isActiveBackpack(holder, event.getOldCursor()) || itemFactory.isBackpack(event.getOldCursor())) {
+        boolean touchesProtected = event.getRawSlots().stream()
+                .filter(slot -> slot >= 0 && slot < top.getSize())
+                .anyMatch(slot -> !BackpackLayout.isStorageGuiSlot(holder.capacity(), holder.page(), slot));
+        if (touchesProtected || isActiveBackpack(holder, event.getOldCursor())
+                || BackpackNestingPolicy.containsBackpack(event.getOldCursor(), itemFactory)) {
             event.setCancelled(true);
-            messages.send(event.getWhoClicked(), "cannot-nest");
+            if (BackpackNestingPolicy.containsBackpack(event.getOldCursor(), itemFactory)) {
+                messages.send(event.getWhoClicked(), "cannot-nest");
+            }
         }
     }
 
@@ -166,10 +176,43 @@ public final class BackpackListener implements Listener {
         });
     }
 
-    @EventHandler(priority = EventPriority.MONITOR)
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onDeath(PlayerDeathEvent event) {
+        Player player = event.getEntity();
+        if (service.session(player.getUniqueId()).isPresent()) {
+            player.closeInventory();
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onQuit(PlayerQuitEvent event) {
         if (service.session(event.getPlayer().getUniqueId()).isPresent()) {
             event.getPlayer().closeInventory();
+        }
+    }
+
+    private void handleControl(InventoryClickEvent event, BackpackHolder holder, int rawSlot) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        int relative = rawSlot - holder.controlRowStart();
+        switch (relative) {
+            case BackpackLayout.PREVIOUS_SLOT_OFFSET -> service.changePage(holder, holder.page() - 1);
+            case BackpackLayout.SORT_SLOT_OFFSET -> {
+                if (!service.sort(holder)) {
+                    messages.send(player, "operation-failed");
+                }
+            }
+            case BackpackLayout.QUICK_DEPOSIT_SLOT_OFFSET -> {
+                int moved = service.quickDeposit(player, holder);
+                messages.send(player, moved > 0 ? "quick-deposit" : "quick-deposit-none",
+                        "amount", Integer.toString(moved));
+            }
+            case BackpackLayout.CLOSE_SLOT_OFFSET -> player.closeInventory();
+            case BackpackLayout.NEXT_SLOT_OFFSET -> service.changePage(holder, holder.page() + 1);
+            default -> {
+                // Information/filler slots are intentionally inert.
+            }
         }
     }
 
