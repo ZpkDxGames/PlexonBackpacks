@@ -11,7 +11,6 @@ import com.zpkdxgames.plexonbackpacks.service.BackpackCapacityInvariant;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
@@ -214,10 +213,11 @@ public final class BackpackInfoGui {
         int nextCapacity = Math.max(currentCapacity, next.slots());
         double cost = next.upgradeCost();
         UpgradeViewModel.Status status;
-        if (!referencePresent) {
-            status = UpgradeViewModel.Status.REFERENCE_MISSING;
-        } else if (!next.permission().isBlank() && !player.hasPermission(next.permission())) {
+        if (!player.hasPermission("plexonbackpacks.upgrade")
+                || (!next.permission().isBlank() && !player.hasPermission(next.permission()))) {
             status = UpgradeViewModel.Status.MISSING_REQUIREMENT;
+        } else if (!referencePresent) {
+            status = UpgradeViewModel.Status.REFERENCE_MISSING;
         } else if (cost > 0.0D && !economy.available()) {
             status = UpgradeViewModel.Status.ECONOMY_UNAVAILABLE;
         } else if (cost > 0.0D && !economy.has(player.getUniqueId(), cost)) {
@@ -343,7 +343,7 @@ public final class BackpackInfoGui {
             case MAX_TIER -> config.component("<gray>This backpack is already fully upgraded.</gray>");
             case UPGRADES_DISABLED -> config.component("<gray>Backpack upgrades are disabled on this server.</gray>");
             case WRONG_OWNER -> config.component("<gray>Only the owner or an authorized administrator can upgrade it.</gray>");
-            case MISSING_REQUIREMENT -> config.component("<gray>You do not meet the next tier requirement yet.</gray>");
+            case MISSING_REQUIREMENT -> config.component("<gray>You do not meet the upgrade requirement yet.</gray>");
             case ECONOMY_UNAVAILABLE -> config.component("<gray>Paid upgrades are temporarily unavailable.</gray>");
             case INSUFFICIENT_FUNDS -> config.component("<gray>You do not have enough money for this upgrade.</gray>");
             case BACKPACK_OPEN -> config.component("<gray>Close the storage session before upgrading.</gray>");
