@@ -7,8 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.bukkit.Bukkit;
@@ -107,5 +111,62 @@ class BackpackDataStoreFailureTest {
         assertFalse(store.saveSync());
         assertEquals(committed, Files.readString(csv));
         assertEquals(2, store.dirtyCount());
+    }
+
+    @Test
+    void compactionCannotPublishCapturedButUnwrittenCandidateRows() throws Exception {
+        BackpackDataStore store = new BackpackDataStore(plugin, config);
+        store.load();
+
+        UUID id = UUID.randomUUID();
+        BackpackRecord record = store.register(id, "basic", null, 9);
+        ItemStack[] committedContents = new ItemStack[9];
+        committedContents[0] = new ItemStack(Material.STONE, 2);
+        record.contents(committedContents);
+        store.markDirty(id);
+        assertTrue(store.saveSync());
+
+        ItemStack[] candidateContents = new ItemStack[9];
+        candidateContents[0] = new ItemStack(Material.DIAMOND, 7);
+        record.contents(candidateContents);
+        store.markDirty(id);
+
+        Map<?, ?> captured = captureRows(store, List.of(id));
+        compactCsv(store);
+
+        BackpackDataStore beforeCommit = new BackpackDataStore(plugin, config);
+        beforeCommit.load();
+        ItemStack beforeCommitItem = beforeCommit.find(id).orElseThrow().contents()[0];
+        assertEquals(Material.STONE, beforeCommitItem.getType(),
+                "compaction must expose only rows that completed a successful write");
+        assertEquals(2, beforeCommitItem.getAmount());
+
+        assertTrue(writeRows(store, captured));
+        compactCsv(store);
+
+        BackpackDataStore afterCommit = new BackpackDataStore(plugin, config);
+        afterCommit.load();
+        ItemStack afterCommitItem = afterCommit.find(id).orElseThrow().contents()[0];
+        assertEquals(Material.DIAMOND, afterCommitItem.getType());
+        assertEquals(7, afterCommitItem.getAmount());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<?, ?> captureRows(BackpackDataStore store, Collection<UUID> ids) throws Exception {
+        Method method = BackpackDataStore.class.getDeclaredMethod("captureRows", Collection.class);
+        method.setAccessible(true);
+        return (Map<?, ?>) method.invoke(store, ids);
+    }
+
+    private static boolean writeRows(BackpackDataStore store, Map<?, ?> rows) throws Exception {
+        Method method = BackpackDataStore.class.getDeclaredMethod("writeRows", Map.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(store, rows);
+    }
+
+    private static void compactCsv(BackpackDataStore store) throws Exception {
+        Method method = BackpackDataStore.class.getDeclaredMethod("compactCsv");
+        method.setAccessible(true);
+        method.invoke(store);
     }
 }
