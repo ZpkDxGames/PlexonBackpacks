@@ -1,80 +1,109 @@
-# PlexonBackpacks
+# PlexonBackpacks 2.0.0
 
-PlexonBackpacks is a lightweight tiered-backpack plugin for Paper 26.2. Every physical backpack is a custom player-head item with its own stable UUID and persistent storage record.
+PlexonBackpacks is a tiered, item-safe backpack plugin for **Paper 26.2 / Java 25**. Every physical backpack is a custom item reference with a stable UUID backed by one authoritative persisted storage record.
 
-## 1.2.0
+## Stable 2.0 architecture
 
-PlexonBackpacks 1.2.0 is the Core-native integration release. Gameplay, PDC identity, ownership rules and the append-only CSV journal remain owned by PlexonBackpacks.
+PlexonBackpacks treats UUID/PDC linkage as identity. Display name, lore, material, GUI title and slot position are presentation only.
 
-- PlexonCore 1.0.0 integration with `CORE` and `STANDALONE` runtime modes
-- `backpacks` module registration with Core API range `>=1.0 <2.0`
-- Public `PlexonBackpacksAPI` through Bukkit `ServicesManager`
-- Immutable backpack, tier and open-session views
-- `PlexonBackpackOpenedEvent`, `PlexonBackpackClosedEvent` and `PlexonBackpackBoundEvent`
-- Stable per-session and per-event IDs
-- `/backpack diagnostics`
-- Verified Core dependency provisioning without shading Core into the plugin JAR
-- Tag-driven `v1.2.0` release workflow with SHA-256 checksums
+The storage/custody boundary is deliberately conservative:
 
-PlexonCore is a soft dependency. If Core is absent or cannot be linked safely, backpack gameplay and the public Backpack API/events continue in standalone compatibility mode.
+- exact Paper `ItemStack` byte serialization preserves metadata, components and foreign PDC;
+- one authoritative session is allowed per player and per backpack UUID;
+- an opened session persists current visible contents before its lock is released;
+- failed close persistence keeps the session authoritative instead of silently unlocking stale state;
+- cursor custody and active-reference protections prevent closing, dropping, swapping or nesting around an unresolved backpack session;
+- quick deposit and sorting snapshot both sides of their mutation and roll back if synchronous persistence fails;
+- upgrades persist authoritative tier/capacity changes and refund economy payment if the transaction fails;
+- current-generation item references whose persisted record is missing fail closed instead of being recreated as empty storage.
 
-## Preserved backpack features
+## Persistence
 
-- Five configurable tiers: Basic (9), Iron (18), Gold (27), Diamond (36), Netherite (54)
-- Custom player-head textures and custom model data
-- Unique storage UUID per physical backpack
-- Ownership applied only on the first successful opening
-- Optional owner enforcement and bypass permission
-- Right-click block/air opening from main or off hand
-- Administrative giver GUI and unique unbound give/craft output
-- Simultaneous-open locking
-- Complete anti-nesting protection for cursor, shift-click, hotbar, offhand and drag paths
-- Placement, armor-dispenser and active-backpack movement/drop protection
-- Dirty-record-only append-only CSV write-behind
-- Asynchronous writes, newest-row coalescing and atomic compaction
-- Legacy YAML migration, corrupt-file preservation and final synchronous shutdown save
-- Change detection for open inventories
+Backpack data is stored under:
 
-## Requirements
+```text
+plugins/PlexonBackpacks/backpacks-data.csv
+plugins/PlexonBackpacks/schema-version.txt
+```
 
-- Paper 26.2 or compatible fork
-- Java 25
-- PlexonCore 1.0.0 is optional at runtime but recommended for ecosystem registration
+Persistence schema `2` uses an append-only CSV journal with dirty-record snapshots, newest-row coalescing, asynchronous writes, bounded main-thread serialization, and atomic compaction. Pre-2.0 adoption creates a mandatory backup under `plugins/PlexonBackpacks/backups/pre-2.0/` before changing persistence state.
 
-Backpack data remains at `plugins/PlexonBackpacks/backpacks-data.csv`. Do not replace or edit this file during the 1.2.0 upgrade.
+Compaction authority advances **only after a row completes a successful append**. Captured, queued or active-but-unwritten candidates cannot become the compacted authoritative row before their write succeeds.
+
+Autosave snapshots open sessions on the primary thread, then hands immutable encoded rows to the asynchronous writer. Shutdown closes/snapshots sessions and performs a final synchronous flush.
+
+## Configuration reload safety
+
+`/backpack reload` first closes all authoritative sessions. The new file is then parsed and runtime subsystems are rebuilt as one logical boundary.
+
+If parsing or runtime application fails:
+
+- last-known-good in-memory configuration is restored;
+- tier definitions remain last-good;
+- admin-menu state, recipes and autosave scheduling are rebuilt from the restored configuration;
+- the externally edited candidate file remains on disk so the administrator can correct it and retry.
+
+A failed reload therefore cannot leave a mixed runtime with old tier definitions but new dynamic settings.
+
+## Player and administration features
+
+- Five configurable tiers from 9 to 54 slots.
+- Custom player-head textures and custom model data.
+- Ownership on first successful open, optional owner enforcement and bypass permission.
+- Right-click opening from main/off hand.
+- Simultaneous-open locking.
+- Anti-nesting for cursor, shift-click, hotbar, offhand, drag and double-click paths.
+- Placement, armor-dispenser, drop/swap and active-backpack movement protection.
+- Quick deposit and deterministic sorting.
+- Paid tier upgrades with safe refund semantics.
+- Administrative giver, inspect, recover, repair and force-close tooling.
+- Public read-safe Bukkit API and lifecycle events.
+- `/backpack diagnostics` publication/session/storage visibility.
 
 ## Commands
 
 | Command | Description | Permission |
 |---|---|---|
 | `/backpack` | Open the backpack in either hand | `plexonbackpacks.use` |
+| `/backpack upgrade` | Upgrade the held backpack when eligible | `plexonbackpacks.upgrade` |
 | `/backpack tiers` | List configured tiers | `plexonbackpacks.use` |
-| `/backpack inspect` | Show the held backpack identity | `plexonbackpacks.use` |
+| `/backpack inspect [uuid]` | Inspect held/authoritative backpack state | `plexonbackpacks.use` / `plexonbackpacks.inspect-any` |
 | `/backpack gui` | Open the administrative tier giver | `plexonbackpacks.admin-gui` |
-| `/backpack give <player> <tier> [amount]` | Give unique, unbound backpacks | `plexonbackpacks.give` |
-| `/backpack reload` | Reload tiers, messages, recipes and GUI items | `plexonbackpacks.reload` |
-| `/backpack save` | Force a synchronous backpack save | `plexonbackpacks.save` |
+| `/backpack give <player> <tier> [amount]` | Give unique unbound backpacks | `plexonbackpacks.give` |
+| `/backpack recover <uuid>` | Recover a reference only for existing state | `plexonbackpacks.recover` |
+| `/backpack repair` | Repair proven held-reference metadata | `plexonbackpacks.repair` |
+| `/backpack forceclose <uuid>` | Safely close an authoritative session | `plexonbackpacks.force-close` |
+| `/backpack reload` | Reload configuration/runtime atomically | `plexonbackpacks.reload` |
+| `/backpack save` | Force synchronous backpack persistence | `plexonbackpacks.save` |
 | `/backpack diagnostics` | Show Core/API/session/storage summary | `plexonbackpacks.diagnostics` |
 
-Aliases: `/backpacks`, `/bp`
+Aliases: `/backpacks`, `/bp`.
 
-## Building
+## Requirements
 
-Gradle is the canonical build path. PlexonCore is compile-only and is never committed or shaded.
+- Paper `26.2.build.121-stable` or compatible fork
+- Java 25
+- PlexonCore 2.0.4 is optional at runtime but recommended for ecosystem registration
+- Vault/economy provider is optional for paid upgrades
+- PlaceholderAPI is optional where its integration is enabled
+
+PlexonCore is compile-only/provided and never shaded. If Core cannot be linked safely, backpack gameplay and the public API continue through standalone compatibility mode.
+
+## Build and stable release
+
+Gradle is the canonical build path:
 
 ```bash
 bash scripts/provision-core.sh
-gradle clean test check jar
+gradle clean test check jar --no-daemon
 ```
 
-The provisioning script downloads the official `PlexonCore-1.0.0.jar`, verifies its pinned SHA-256, and places it in a temporary local Maven repository under `.deps/`.
+The provisioning script downloads PlexonCore 2.0.4, verifies SHA-256 `61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf`, and installs it only into the temporary `.deps/` repository.
 
-## Upgrade from 1.1.0
+Stable CI proves accepted Phase 3 source `594c773e4cc4a696ce790a61b70dc8074f5f0c05` and final RC2 lineage `fdc88427bbfbaa5a517a0847def6e9617120695f`, requires a non-empty zero-failure/error/skip test suite, verifies Java class major 69 and dependency isolation, and emits exact checksum/provenance evidence.
 
-Stop the server, replace `PlexonBackpacks-1.1.0.jar` with `PlexonBackpacks-1.2.0.jar`, keep the entire `plugins/PlexonBackpacks/` directory unchanged, and start the server. Existing backpack UUIDs, owners, tiers and contents require no data migration.
+Stable publication runs only from `release/stable` when it equals exact current `main`. It rebuilds/retests, publishes `PlexonBackpacks-2.0.0.jar` plus `SHA256SUMS.txt`, `TEST_SUMMARY.txt` and `PROVENANCE.txt`, then downloads and verifies those public assets before the workflow succeeds.
 
-See `docs/MIGRATION_1_2.md`, `docs/API.md` and `docs/PLEXONCORE.md` for the integration contracts and validation checklist.
+Live PlexonCraft migration, custody, restart, MSPT and soak certification is a deployment follow-up. Missing live evidence is recorded as `runtime_certification=NOT_EXECUTED`; it does not block reproducible GitHub source/release closure.
 
-## Author
-
-Created and maintained by Tonim / ZpkDxGames.
+Stable rollback baseline: `v1.2.1` at `488faf508d0708e60b2caab64a97a7e63b06a7c8`, JAR SHA-256 `1a0eb1f3a60ac3c1b1a213281876a0026124f6d54190d158c77134b4c2cec018`.
