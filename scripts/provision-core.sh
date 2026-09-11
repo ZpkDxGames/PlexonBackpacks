@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CORE_VERSION="1.0.0"
-CORE_SHA256="4abce6de93293e21b31cb874734430d5bdc77de17a4c3b98fd6a9006e1f13018"
+CORE_VERSION="2.0.4"
+CORE_SHA256="61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf"
 CORE_URL="https://github.com/ZpkDxGames/PlexonCore/releases/download/v${CORE_VERSION}/PlexonCore-${CORE_VERSION}.jar"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOWNLOAD_DIR="${ROOT}/.deps/download"

@@ -3,6 +3,8 @@ package com.zpkdxgames.plexonbackpacks.storage;
 import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
+import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
+import com.zpkdxgames.plexonbackpacks.service.BackpackCapacityInvariant;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -38,12 +40,17 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Main-thread record cache backed by an append-only CSV journal.
  *
- * <p>Only changed backpacks are serialized during an autosave. Disk appends and
- * infrequent compaction run asynchronously, avoiding the full-database YAML
- * serialization and rewrite that would otherwise occur on every save.</p>
+ * <p>Live Bukkit ItemStacks are copied and serialized on the primary thread.
+ * Only immutable encoded rows are handed to the asynchronous disk writer.</p>
  */
 public final class BackpackDataStore {
+    public static final int CURRENT_SCHEMA_VERSION = 2;
     private static final String HEADER = "id,tier,owner,created_at_ms,last_access_ms,contents_base64";
+
+    @FunctionalInterface
+    interface ItemStackEncoder {
+        byte[] encode(ItemStack[] contents);
+    }
 
     private record SnapshotRow(UUID id, long sequence, String line) {
     }
@@ -52,6 +59,8 @@ public final class BackpackDataStore {
     private final ConfigManager config;
     private final File dataFile;
     private final File legacyDataFile;
+    private final File schemaFile;
+    private final ItemStackEncoder itemStackEncoder;
     private final Map<UUID, BackpackRecord> records = new HashMap<>();
     private final Set<UUID> dirtyIds = new LinkedHashSet<>();
     private final Map<UUID, String> latestRows = new ConcurrentHashMap<>();
@@ -64,12 +73,19 @@ public final class BackpackDataStore {
     private Map<UUID, SnapshotRow> activeRows;
     private volatile long journalRows;
     private volatile boolean shuttingDown;
+    private volatile String lastFailure = "NONE";
 
     public BackpackDataStore(PlexonBackpacksPlugin plugin, ConfigManager config) {
+        this(plugin, config, ItemStack::serializeItemsAsBytes);
+    }
+
+    BackpackDataStore(PlexonBackpacksPlugin plugin, ConfigManager config, ItemStackEncoder itemStackEncoder) {
         this.plugin = plugin;
         this.config = config;
         this.dataFile = new File(plugin.getDataFolder(), "backpacks-data.csv");
         this.legacyDataFile = new File(plugin.getDataFolder(), "backpacks-data.yml");
+        this.schemaFile = new File(plugin.getDataFolder(), "schema-version.txt");
+        this.itemStackEncoder = itemStackEncoder;
     }
 
     public void load() {
@@ -78,23 +94,96 @@ public final class BackpackDataStore {
         latestRows.clear();
         writtenSequences.clear();
         journalRows = 0;
+        shuttingDown = false;
+        lastFailure = "NONE";
 
-        if (dataFile.exists()) {
-            loadCsv();
-            return;
-        }
-        if (legacyDataFile.exists()) {
-            migrateLegacyYaml();
+        try {
+            int existingSchema = readSchemaVersion();
+            if (existingSchema > CURRENT_SCHEMA_VERSION) {
+                throw new IllegalStateException("Persistence schema " + existingSchema
+                        + " is newer than supported schema " + CURRENT_SCHEMA_VERSION);
+            }
+            if (existingSchema == 0 && (dataFile.exists() || legacyDataFile.exists())) {
+                backupPrePhase2Data();
+            }
+
+            if (dataFile.exists()) {
+                loadCsvStrict();
+            } else if (legacyDataFile.exists()) {
+                migrateLegacyYamlStrict();
+            }
+
+            if (existingSchema < CURRENT_SCHEMA_VERSION) {
+                writeSchemaVersion(CURRENT_SCHEMA_VERSION);
+            }
+        } catch (RuntimeException exception) {
+            records.clear();
+            dirtyIds.clear();
+            latestRows.clear();
+            lastFailure = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+            throw exception;
         }
     }
 
-    private void loadCsv() {
-        int skipped = 0;
+    private int readSchemaVersion() {
+        if (!schemaFile.exists()) {
+            return 0;
+        }
+        try {
+            String value = Files.readString(schemaFile.toPath(), StandardCharsets.UTF_8).trim();
+            int version = Integer.parseInt(value);
+            if (version < 1) {
+                throw new IllegalStateException("Invalid persistence schema version: " + value);
+            }
+            return version;
+        } catch (IOException | NumberFormatException exception) {
+            throw new IllegalStateException("Could not read schema-version.txt", exception);
+        }
+    }
+
+    private void writeSchemaVersion(int version) {
+        try {
+            Files.createDirectories(schemaFile.toPath().getParent());
+            Path temporary = schemaFile.toPath().resolveSibling(schemaFile.getName() + ".tmp");
+            Files.writeString(temporary, Integer.toString(version) + System.lineSeparator(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            moveAtomically(temporary, schemaFile.toPath());
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not write persistence schema marker", exception);
+        }
+    }
+
+    private void backupPrePhase2Data() {
+        Path backupDir = plugin.getDataFolder().toPath().resolve("backups").resolve("pre-2.0");
+        try {
+            Files.createDirectories(backupDir);
+            if (dataFile.exists()) {
+                copyOnce(dataFile.toPath(), backupDir.resolve(dataFile.getName()));
+            }
+            if (legacyDataFile.exists()) {
+                copyOnce(legacyDataFile.toPath(), backupDir.resolve(legacyDataFile.getName()));
+            }
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not create mandatory pre-2.0 persistence backup", exception);
+        }
+    }
+
+    private static void copyOnce(Path source, Path target) throws IOException {
+        if (!Files.exists(target)) {
+            Files.copy(source, target, StandardCopyOption.COPY_ATTRIBUTES);
+        }
+    }
+
+    private void loadCsvStrict() {
+        Map<UUID, BackpackRecord> loadedRecords = new LinkedHashMap<>();
+        Map<UUID, String> loadedRows = new LinkedHashMap<>();
         long rowsRead = 0;
         try (BufferedReader reader = Files.newBufferedReader(dataFile.toPath(), StandardCharsets.UTF_8)) {
             String line;
             boolean firstLine = true;
+            int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
+                lineNumber++;
                 if (firstLine) {
                     firstLine = false;
                     if (line.equals(HEADER) || line.isBlank()) {
@@ -104,25 +193,25 @@ public final class BackpackDataStore {
                 if (line.isBlank()) {
                     continue;
                 }
-
                 try {
                     BackpackRecord record = decodeRow(line);
-                    records.put(record.id(), record);
-                    latestRows.put(record.id(), line);
+                    loadedRecords.put(record.id(), record);
+                    loadedRows.put(record.id(), line);
                     rowsRead++;
                 } catch (RuntimeException exception) {
-                    skipped++;
+                    throw new IllegalStateException("Malformed backpacks-data.csv row at line " + lineNumber, exception);
                 }
             }
         } catch (IOException exception) {
-            preserveCorruptCsv(exception);
-            return;
+            throw new IllegalStateException("Could not read backpacks-data.csv", exception);
         }
 
+        records.putAll(loadedRecords);
+        latestRows.putAll(loadedRows);
         journalRows = rowsRead;
         sequenceCounter.set(rowsRead);
-        plugin.getLogger().info("Loaded " + records.size() + " backpack record(s) from CSV."
-                + (skipped == 0 ? "" : " Skipped " + skipped + " invalid journal row(s)."));
+        plugin.getLogger().info("Loaded " + records.size() + " backpack record(s) from CSV using schema "
+                + CURRENT_SCHEMA_VERSION + ".");
     }
 
     private BackpackRecord decodeRow(String line) {
@@ -144,66 +233,61 @@ public final class BackpackDataStore {
                 ? new ItemStack[0]
                 : ItemStack.deserializeItemsFromBytes(bytes);
         if (contents.length > 54) {
-            ItemStack[] trimmed = new ItemStack[54];
-            System.arraycopy(contents, 0, trimmed, 0, trimmed.length);
-            contents = trimmed;
+            throw new IllegalArgumentException("Backpack contents exceed the supported 54-slot bound");
         }
         return new BackpackRecord(id, tier, owner, createdAt, lastAccess, contents);
     }
 
-    private void migrateLegacyYaml() {
+    private void migrateLegacyYamlStrict() {
         YamlConfiguration yaml = new YamlConfiguration();
         try {
             yaml.load(legacyDataFile);
         } catch (IOException | InvalidConfigurationException exception) {
-            preserveCorruptLegacyFile(exception);
-            return;
+            throw new IllegalStateException("Legacy backpacks-data.yml is malformed", exception);
         }
 
         ConfigurationSection root = yaml.getConfigurationSection("backpacks");
-        int skipped = 0;
+        Map<UUID, BackpackRecord> migrated = new LinkedHashMap<>();
         if (root != null) {
             for (String idText : root.getKeys(false)) {
                 try {
                     UUID id = UUID.fromString(idText);
                     ConfigurationSection section = root.getConfigurationSection(idText);
                     if (section == null) {
-                        skipped++;
-                        continue;
+                        throw new IllegalArgumentException("Missing backpack section");
                     }
                     String tier = section.getString("tier");
                     if (tier == null || tier.isBlank()) {
-                        skipped++;
-                        continue;
+                        throw new IllegalArgumentException("Missing tier");
                     }
                     UUID owner = parseUuid(section.getString("owner"));
                     long createdAt = section.getLong("created-at", System.currentTimeMillis());
                     long lastAccess = section.getLong("last-access", createdAt);
-                    ItemStack[] contents = readLegacyContents(section.getList("contents"));
-                    records.put(id, new BackpackRecord(id, tier, owner, createdAt, lastAccess, contents));
-                } catch (IllegalArgumentException exception) {
-                    skipped++;
+                    ItemStack[] contents = readLegacyContentsStrict(section.getList("contents"));
+                    migrated.put(id, new BackpackRecord(id, tier, owner, createdAt, lastAccess, contents));
+                } catch (RuntimeException exception) {
+                    throw new IllegalStateException("Malformed legacy backpack record " + idText, exception);
                 }
             }
         }
 
+        records.putAll(migrated);
         dirtyIds.addAll(records.keySet());
         Map<UUID, SnapshotRow> migrationRows = captureRows(List.copyOf(dirtyIds));
         if (!writeRows(migrationRows)) {
             dirtyIds.addAll(records.keySet());
-            plugin.getLogger().severe("Legacy backpack data could not be migrated to CSV.");
-            return;
+            throw new IllegalStateException("Legacy backpack data could not be migrated to CSV");
         }
 
-        Path migrated = legacyDataFile.toPath().resolveSibling("backpacks-data.migrated.yml");
+        Path migratedPath = legacyDataFile.toPath().resolveSibling("backpacks-data.migrated.yml");
         try {
-            Files.move(legacyDataFile.toPath(), migrated, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(legacyDataFile.toPath(), migratedPath, StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.COPY_ATTRIBUTES);
         } catch (IOException exception) {
-            plugin.getLogger().warning("CSV migration succeeded, but the old YAML file could not be renamed: "
+            plugin.getLogger().warning("CSV migration succeeded, but a convenience migrated YAML copy could not be created: "
                     + exception.getMessage());
         }
-        plugin.getLogger().info("Migrated " + records.size() + " backpack record(s) from YAML to CSV."
-                + (skipped == 0 ? "" : " Skipped " + skipped + " invalid record(s)."));
+        plugin.getLogger().info("Migrated " + records.size() + " backpack record(s) from legacy YAML without skips.");
     }
 
     public Optional<BackpackRecord> find(UUID id) {
@@ -214,6 +298,9 @@ public final class BackpackDataStore {
         BackpackRecord existing = records.get(id);
         if (existing != null) {
             return existing;
+        }
+        if (size < 9 || size > 54) {
+            throw new IllegalArgumentException("backpack size outside supported bounds");
         }
         long now = System.currentTimeMillis();
         BackpackRecord record = new BackpackRecord(id, tierId, owner, now, now, new ItemStack[size]);
@@ -232,31 +319,67 @@ public final class BackpackDataStore {
         }
     }
 
+    public int dirtyCount() {
+        return dirtyIds.size();
+    }
+
+    public boolean writerRunning() {
+        return writerRunning.get();
+    }
+
+    public long journalRows() {
+        return journalRows;
+    }
+
+    public int schemaVersion() {
+        return CURRENT_SCHEMA_VERSION;
+    }
+
+    public String lastFailure() {
+        return lastFailure;
+    }
+
     public void requestSave() {
         if (shuttingDown) {
             return;
         }
         if (!dirtyIds.isEmpty()) {
-            enqueue(captureRows(List.copyOf(dirtyIds)));
+            try {
+                enqueue(captureRows(List.copyOf(dirtyIds)));
+            } catch (RuntimeException exception) {
+                return;
+            }
         }
         startWriterIfNeeded();
     }
 
-    public void saveSync() {
+    public boolean saveSync() {
         Map<UUID, SnapshotRow> rows = new LinkedHashMap<>();
-        mergeRows(rows, captureRows(List.copyOf(dirtyIds)));
+        try {
+            mergeRows(rows, captureRows(List.copyOf(dirtyIds)));
+        } catch (RuntimeException exception) {
+            return false;
+        }
+
         synchronized (queueLock) {
             mergeRows(rows, activeRows);
             mergeRows(rows, pendingRows.getAndSet(null));
         }
-        if (!writeRows(rows)) {
+        String failureBeforeWrite = lastFailure;
+        boolean success = writeRows(rows);
+        if (!success) {
             dirtyIds.addAll(rows.keySet());
+            return false;
         }
+        if (lastFailure.equals(failureBeforeWrite)) {
+            lastFailure = "NONE";
+        }
+        return true;
     }
 
-    public void flushSync() {
+    public boolean flushSync() {
         shuttingDown = true;
-        saveSync();
+        return saveSync();
     }
 
     private Map<UUID, SnapshotRow> captureRows(Collection<UUID> ids) {
@@ -264,26 +387,34 @@ public final class BackpackDataStore {
         for (UUID id : ids) {
             BackpackRecord record = records.get(id);
             if (record == null) {
-                dirtyIds.remove(id);
                 continue;
             }
             try {
                 long sequence = sequenceCounter.incrementAndGet();
-                String line = encodeRow(record);
-                SnapshotRow row = new SnapshotRow(id, sequence, line);
-                snapshots.put(id, row);
-                latestRows.put(id, line);
-                dirtyIds.remove(id);
+                snapshots.put(id, new SnapshotRow(id, sequence, encodeRow(record)));
             } catch (RuntimeException exception) {
-                plugin.getLogger().severe("Could not serialize backpack " + id + ": "
-                        + exception.getMessage());
+                lastFailure = "Could not serialize authoritative backpack " + id + ": "
+                        + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage());
+                plugin.getLogger().severe(lastFailure);
+                throw new IllegalStateException(lastFailure, exception);
             }
         }
+
+        for (Map.Entry<UUID, SnapshotRow> entry : snapshots.entrySet()) {
+            latestRows.put(entry.getKey(), entry.getValue().line());
+            dirtyIds.remove(entry.getKey());
+        }
+        ids.stream().filter(id -> !records.containsKey(id)).forEach(dirtyIds::remove);
         return snapshots;
     }
 
     private String encodeRow(BackpackRecord record) {
-        byte[] contents = ItemStack.serializeItemsAsBytes(record.contents());
+        TierDefinition tier = config.tier(record.tierId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Cannot persist backpack " + record.id() + " because tier '" + record.tierId() + "' is not configured"));
+        int capacity = BackpackCapacityInvariant.authoritativeCapacity(record, tier);
+        ItemStack[] normalized = BackpackCapacityInvariant.normalize(record.contents(), capacity);
+        byte[] contents = itemStackEncoder.encode(normalized);
         return String.join(",",
                 escapeCsv(record.id().toString()),
                 escapeCsv(record.tierId()),
@@ -352,10 +483,7 @@ public final class BackpackDataStore {
         }
     }
 
-    private static void mergeRows(
-            Map<UUID, SnapshotRow> target,
-            Map<UUID, SnapshotRow> source
-    ) {
+    private static void mergeRows(Map<UUID, SnapshotRow> target, Map<UUID, SnapshotRow> source) {
         if (source == null || source.isEmpty()) {
             return;
         }
@@ -409,13 +537,14 @@ public final class BackpackDataStore {
                     try {
                         compactCsv();
                     } catch (IOException exception) {
-                        plugin.getLogger().severe("Could not compact backpacks-data.csv: "
-                                + exception.getMessage());
+                        lastFailure = "Could not compact backpacks-data.csv: " + exception.getMessage();
+                        plugin.getLogger().severe(lastFailure);
                     }
                 }
                 return true;
             } catch (IOException exception) {
-                plugin.getLogger().severe("Could not append backpacks-data.csv: " + exception.getMessage());
+                lastFailure = "Could not append backpacks-data.csv: " + exception.getMessage();
+                plugin.getLogger().severe(lastFailure);
                 return false;
             }
         }
@@ -438,37 +567,15 @@ public final class BackpackDataStore {
                 writer.newLine();
             }
         }
-        try {
-            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException exception) {
-            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        moveAtomically(temporary, target);
         journalRows = compactedRows.size();
     }
 
-    private void preserveCorruptCsv(Exception exception) {
-        String backupName = "backpacks-data.corrupt-" + Instant.now().toEpochMilli() + ".csv";
-        Path backup = dataFile.toPath().resolveSibling(backupName);
+    private static void moveAtomically(Path source, Path target) throws IOException {
         try {
-            Files.move(dataFile.toPath(), backup, StandardCopyOption.REPLACE_EXISTING);
-            plugin.getLogger().severe("backpacks-data.csv could not be read and was preserved as "
-                    + backupName + ": " + exception.getMessage());
-        } catch (IOException moveException) {
-            plugin.getLogger().severe("backpacks-data.csv could not be read or preserved: "
-                    + exception.getMessage());
-        }
-    }
-
-    private void preserveCorruptLegacyFile(Exception exception) {
-        String backupName = "backpacks-data.corrupt-" + Instant.now().toEpochMilli() + ".yml";
-        Path backup = legacyDataFile.toPath().resolveSibling(backupName);
-        try {
-            Files.move(legacyDataFile.toPath(), backup, StandardCopyOption.REPLACE_EXISTING);
-            plugin.getLogger().severe("Legacy backpacks-data.yml could not be read and was preserved as "
-                    + backupName + ": " + exception.getMessage());
-        } catch (IOException moveException) {
-            plugin.getLogger().severe("Legacy backpacks-data.yml could not be read or preserved: "
-                    + exception.getMessage());
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (AtomicMoveNotSupportedException exception) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
@@ -479,16 +586,23 @@ public final class BackpackDataStore {
         return UUID.fromString(text);
     }
 
-    private static ItemStack[] readLegacyContents(List<?> list) {
+    private static ItemStack[] readLegacyContentsStrict(List<?> list) {
         if (list == null || list.isEmpty()) {
             return new ItemStack[0];
         }
-        ItemStack[] contents = new ItemStack[Math.min(54, list.size())];
+        if (list.size() > 54) {
+            throw new IllegalArgumentException("Legacy backpack contents exceed 54 slots");
+        }
+        ItemStack[] contents = new ItemStack[list.size()];
         for (int index = 0; index < contents.length; index++) {
             Object value = list.get(index);
-            if (value instanceof ItemStack item) {
-                contents[index] = item.clone();
+            if (value == null) {
+                continue;
             }
+            if (!(value instanceof ItemStack item)) {
+                throw new IllegalArgumentException("Legacy slot " + index + " is not an ItemStack");
+            }
+            contents[index] = item.clone();
         }
         return contents;
     }
@@ -501,7 +615,7 @@ public final class BackpackDataStore {
         return '"' + value.replace("\"", "\"\"") + '"';
     }
 
-    private static List<String> parseCsvLine(String line) {
+    static List<String> parseCsvLine(String line) {
         List<String> fields = new ArrayList<>(6);
         StringBuilder value = new StringBuilder();
         boolean quoted = false;

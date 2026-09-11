@@ -57,6 +57,10 @@ public final class ConfigManager {
                     ? section.getInt("custom-model-data")
                     : null;
             String permission = section.getString("permission", "");
+            double upgradeCost = section.getDouble("upgrade-cost", 0.0D);
+            if (!Double.isFinite(upgradeCost) || upgradeCost < 0.0D) {
+                throw new IllegalStateException("Tier '" + id + "' has an invalid upgrade-cost");
+            }
             RecipeDefinition recipe = readRecipe(id, section.getConfigurationSection("recipe"));
 
             loaded.put(id, new TierDefinition(
@@ -68,6 +72,7 @@ public final class ConfigManager {
                     texture,
                     customModelData,
                     permission == null ? "" : permission,
+                    upgradeCost,
                     recipe
             ));
         }
@@ -139,6 +144,17 @@ public final class ConfigManager {
         return List.copyOf(tiers.values());
     }
 
+    public Optional<TierDefinition> nextTier(String currentTierId) {
+        List<TierDefinition> ordered = tiers();
+        for (int index = 0; index < ordered.size(); index++) {
+            if (!ordered.get(index).id().equalsIgnoreCase(currentTierId)) {
+                continue;
+            }
+            return index + 1 < ordered.size() ? Optional.of(ordered.get(index + 1)) : Optional.empty();
+        }
+        return Optional.empty();
+    }
+
     public boolean ownershipEnabled() {
         return plugin.getConfig().getBoolean("settings.ownership-enabled", true);
     }
@@ -149,6 +165,14 @@ public final class ConfigManager {
 
     public boolean discoverRecipes() {
         return plugin.getConfig().getBoolean("settings.discover-recipes", true);
+    }
+
+    public boolean upgradesEnabled() {
+        return plugin.getConfig().getBoolean("settings.upgrades-enabled", true);
+    }
+
+    public boolean quickDepositEnabled() {
+        return plugin.getConfig().getBoolean("settings.quick-deposit-enabled", true);
     }
 
     public long autosaveIntervalTicks() {

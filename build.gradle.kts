@@ -1,9 +1,14 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+
 plugins {
     java
 }
 
 group = "com.zpkdxgames"
-version = "1.2.0"
+version = "2.0.0-rc.2"
+
+val productionPaperVersion = "26.2.build.121-stable"
+val mockBukkitPaperVersion = "26.2.build.111-stable"
 
 repositories {
     maven {
@@ -17,14 +22,26 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.2.build.65-beta")
-    compileOnly("com.zpkdxgames:PlexonCore:1.0.0")
+    // Production compilation remains pinned to the exact PlexonCraft target.
+    compileOnly("io.papermc.paper:paper-api:$productionPaperVersion")
+    compileOnly("com.zpkdxgames:PlexonCore:2.0.4")
 
     testImplementation(platform("org.junit:junit-bom:5.12.2"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    testImplementation("io.papermc.paper:paper-api:26.2.build.65-beta")
-    testImplementation("com.zpkdxgames:PlexonCore:1.0.0")
+    testImplementation("com.zpkdxgames:PlexonCore:2.0.4")
+    testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v26.2:4.116.1")
+    // MockBukkit 4.116.1 was built against Paper 26.2.build.111-stable.
+    // Test-only classpaths are intentionally binary-aligned to that API while
+    // production compileJava remains pinned to build.121 above.
+    testImplementation("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
+}
+
+configurations.named("testCompileClasspath") {
+    resolutionStrategy.force("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
+}
+configurations.named("testRuntimeClasspath") {
+    resolutionStrategy.force("io.papermc.paper:paper-api:$mockBukkitPaperVersion")
 }
 
 java {
@@ -40,6 +57,13 @@ tasks {
 
     test {
         useJUnitPlatform()
+        testLogging {
+            events("failed")
+            exceptionFormat = TestExceptionFormat.FULL
+            showCauses = true
+            showExceptions = true
+            showStackTraces = true
+        }
     }
 
     jar {

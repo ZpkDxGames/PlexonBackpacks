@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-      - release/1.2.0
+      - 'phase2/**'
+      - 'phase3/**'
   pull_request:
 
 permissions:
@@ -14,13 +15,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout exact candidate head
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set up Java 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
@@ -36,24 +38,61 @@ jobs:
       - name: Build and test
         run: gradle clean test check jar --no-daemon
 
-      - name: Verify release JAR
+      - name: Report test count
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          tests = failures = errors = skipped = 0
+          for path in glob.glob('build/test-results/test/TEST-*.xml'):
+              root = ET.parse(path).getroot()
+              tests += int(root.attrib.get('tests', 0))
+              failures += int(root.attrib.get('failures', 0))
+              errors += int(root.attrib.get('errors', 0))
+              skipped += int(root.attrib.get('skipped', 0))
+          print(f'TEST_COUNT={tests} FAILURES={failures} ERRORS={errors} SKIPPED={skipped}')
+          if failures or errors or skipped or tests == 0:
+              raise SystemExit(1)
+          PY
+
+      - name: Verify release JAR and isolation
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-1.2.0.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           test -f "$JAR"
-          unzip -p "$JAR" plugin.yml | grep -F "version: '1.2.0'"
+          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.2'"
+          unzip -p "$JAR" plugin.yml | grep -F "api-version: '26.2'"
+          jar tf "$JAR" | grep -F 'com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class'
           if jar tf "$JAR" | grep -q '^com/zpkdxgames/plexoncore/'; then
             echo "PlexonCore classes were shaded into PlexonBackpacks" >&2
             exit 1
           fi
-          git diff --check HEAD^ HEAD
+          if jar tf "$JAR" | grep -q '^net/milkbowl/vault/'; then
+            echo "Vault classes were shaded into PlexonBackpacks" >&2
+            exit 1
+          fi
+
+      - name: Verify Java 25 bytecode
+        run: |
+          set -euo pipefail
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
+          javap -verbose -classpath "$JAR" com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin \
+            | grep -F 'major version: 69'
+
+      - name: Verify source whitespace and checksum
+        run: |
+          set -euo pipefail
+          BASE="$(git merge-base HEAD origin/main)"
+          git diff --check "$BASE" HEAD
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           sha256sum "$JAR" > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
 
       - name: Upload verified build
         uses: actions/upload-artifact@v4
         with:
-          name: PlexonBackpacks-1.2.0
+          name: PlexonBackpacks-2.0.0-rc.2-${{ github.sha }}
           path: |
-            build/libs/PlexonBackpacks-1.2.0.jar
+            build/libs/PlexonBackpacks-2.0.0-rc.2.jar
             SHA256SUMS.txt
+            build/test-results/test/
           if-no-files-found: error

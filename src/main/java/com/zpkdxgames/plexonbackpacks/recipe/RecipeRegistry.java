@@ -6,6 +6,11 @@ import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.RecipeDefinition;
 import com.zpkdxgames.plexonbackpacks.model.TierDefinition;
+import com.zpkdxgames.plexonbackpacks.service.BackpackService;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
 import org.bukkit.Bukkit;
 import org.bukkit.Keyed;
 import org.bukkit.NamespacedKey;
@@ -17,18 +22,15 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
-
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.Map;
-import java.util.Set;
 
 public final class RecipeRegistry implements Listener {
     private final PlexonBackpacksPlugin plugin;
     private final ConfigManager config;
     private final BackpackItemFactory itemFactory;
+    private final BackpackService service;
     private final Messages messages;
     private final Map<NamespacedKey, TierDefinition> tiersByRecipe = new HashMap<>();
     private final Set<NamespacedKey> registeredKeys = new LinkedHashSet<>();
@@ -37,11 +39,13 @@ public final class RecipeRegistry implements Listener {
             PlexonBackpacksPlugin plugin,
             ConfigManager config,
             BackpackItemFactory itemFactory,
+            BackpackService service,
             Messages messages
     ) {
         this.plugin = plugin;
         this.config = config;
         this.itemFactory = itemFactory;
+        this.service = service;
         this.messages = messages;
     }
 
@@ -101,6 +105,14 @@ public final class RecipeRegistry implements Listener {
         if (event.isShiftClick()) {
             event.setCancelled(true);
             messages.send(crafter, "crafted-one-at-a-time");
+            return;
+        }
+
+        ItemStack result = event.getCurrentItem();
+        if (result == null || !itemFactory.isBackpack(result) || !service.ensureRegisteredCraft(result, tier)) {
+            event.setCancelled(true);
+            messages.send(crafter, "persistence-failed");
+            plugin.getLogger().severe("Cancelled backpack craft because its UUID could not be durably registered.");
         }
     }
 
