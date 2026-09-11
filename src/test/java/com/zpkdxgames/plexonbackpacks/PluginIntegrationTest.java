@@ -113,7 +113,9 @@ class PluginIntegrationTest {
         Path configPath = plugin.getDataFolder().toPath().resolve("config.yml");
         String lastGoodFile = Files.readString(configPath);
         boolean quickDepositBefore = plugin.getConfig().getBoolean("settings.quick-deposit-enabled", true);
-        int basicSlotsBefore = api.tier("basic").orElseThrow().slots();
+        int basicSlotsBefore = api.tiers().stream()
+                .filter(tier -> tier.id().equals("basic"))
+                .findFirst().orElseThrow().slots();
 
         YamlConfiguration candidate = YamlConfiguration.loadConfiguration(configPath.toFile());
         candidate.set("settings.quick-deposit-enabled", !quickDepositBefore);
@@ -125,7 +127,9 @@ class PluginIntegrationTest {
         assertEquals(quickDepositBefore,
                 plugin.getConfig().getBoolean("settings.quick-deposit-enabled", !quickDepositBefore),
                 "failed reload must restore dynamic settings used by the live runtime");
-        assertEquals(basicSlotsBefore, api.tier("basic").orElseThrow().slots(),
+        assertEquals(basicSlotsBefore, api.tiers().stream()
+                        .filter(tier -> tier.id().equals("basic"))
+                        .findFirst().orElseThrow().slots(),
                 "failed reload must retain the last runtime-accepted tier map");
         assertEquals(rejectedFile, Files.readString(configPath),
                 "external config candidate must remain on disk for administrator correction");
