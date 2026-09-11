@@ -1,5 +1,5 @@
 name: PlexonBackpacks
-version: '2.0.0-rc.2'
+version: '2.0.0'
 main: com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin
 description: Premium item-safe tiered backpack storage for the Plexon ecosystem.
 author: ZpkDxGames

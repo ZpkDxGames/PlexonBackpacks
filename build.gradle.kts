@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.zpkdxgames"
-version = "2.0.0-rc.2"
+version = "2.0.0"
 
 val productionPaperVersion = "26.2.build.121-stable"
 val mockBukkitPaperVersion = "26.2.build.111-stable"

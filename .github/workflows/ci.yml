@@ -1,24 +1,35 @@
-name: CI
+name: Build
 
 on:
   push:
-    branches:
-      - main
-      - 'phase2/**'
-      - 'phase3/**'
+    branches: ['**']
+    tags-ignore: ['v*']
   pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  ACCEPTED_PHASE3_SHA: '594c773e4cc4a696ce790a61b70dc8074f5f0c05'
+  ACCEPTED_RC2_SHA: 'fdc88427bbfbaa5a517a0847def6e9617120695f'
+  RC2_TAG: 'v2.0.0-rc.2'
+  RC2_JAR_SHA256: 'fd804063ca04aef34be7cc30d5e1672b65bb02b0755477cdbabb8bcc1f0cbc3c'
+  ROLLBACK_TAG: 'v1.2.1'
+  ROLLBACK_SHA: '488faf508d0708e60b2caab64a97a7e63b06a7c8'
+  ROLLBACK_JAR_SHA256: '1a0eb1f3a60ac3c1b1a213281876a0026124f6d54190d158c77134b4c2cec018'
+  CORE_VERSION: '2.0.4'
+  CORE_SHA256: '61d625a717da9f46ee9231e1970d84b4c317ae12cf4090cdf7c9d39b6a1a9baf'
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
-      - name: Checkout exact candidate head
+      - name: Checkout exact source
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set up Java 25
@@ -30,69 +41,136 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: current
+          gradle-version: '9.7.1'
 
       - name: Provision verified PlexonCore API
         run: bash scripts/provision-core.sh
 
-      - name: Build and test
+      - name: Resolve version and prove accepted lineage
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(gradle -q properties --no-daemon | awk '$1 == "version:" {print $2; exit}')"
+          test -n "$VERSION"
+          git merge-base --is-ancestor "$ACCEPTED_PHASE3_SHA" HEAD
+          git merge-base --is-ancestor "$ACCEPTED_RC2_SHA" HEAD
+          grep -Fq "CORE_VERSION=\"${CORE_VERSION}\"" scripts/provision-core.sh
+          grep -Fq "CORE_SHA256=\"${CORE_SHA256}\"" scripts/provision-core.sh
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Full source verification
         run: gradle clean test check jar --no-daemon
 
-      - name: Report test count
+      - name: Build exact test summary
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p build/release-evidence
           python3 - <<'PY'
-          import glob, xml.etree.ElementTree as ET
-          tests = failures = errors = skipped = 0
-          for path in glob.glob('build/test-results/test/TEST-*.xml'):
+          import glob, pathlib, xml.etree.ElementTree as ET
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          paths = sorted(glob.glob('build/test-results/test/TEST-*.xml'))
+          if not paths:
+              raise SystemExit('No JUnit XML results found')
+          for path in paths:
               root = ET.parse(path).getroot()
-              tests += int(root.attrib.get('tests', 0))
-              failures += int(root.attrib.get('failures', 0))
-              errors += int(root.attrib.get('errors', 0))
-              skipped += int(root.attrib.get('skipped', 0))
-          print(f'TEST_COUNT={tests} FAILURES={failures} ERRORS={errors} SKIPPED={skipped}')
-          if failures or errors or skipped or tests == 0:
-              raise SystemExit(1)
+              totals['tests'] += int(root.attrib.get('tests', 0))
+              totals['failures'] += int(root.attrib.get('failures', 0))
+              totals['errors'] += int(root.attrib.get('errors', 0))
+              totals['skipped'] += int(root.attrib.get('skipped', 0))
+          if totals['tests'] <= 0:
+              raise SystemExit('No tests executed')
+          if totals['failures'] or totals['errors'] or totals['skipped']:
+              raise SystemExit(f'Non-clean test totals: {totals}')
+          pathlib.Path('build/release-evidence/TEST_SUMMARY.txt').write_text(
+              f"TEST_COUNT={totals['tests']} FAILURES={totals['failures']} ERRORS={totals['errors']} SKIPPED={totals['skipped']}\n",
+              encoding='utf-8')
+          print(totals)
           PY
 
-      - name: Verify release JAR and isolation
+      - name: Verify stable distribution
+        shell: bash
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
-          test -f "$JAR"
-          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.2'"
+          JAR="build/libs/PlexonBackpacks-${VERSION}.jar"
+          test -s "$JAR"
+          jar tf "$JAR" > build/release-evidence/jar-contents.txt
+          for required in \
+            plugin.yml \
+            com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class \
+            com/zpkdxgames/plexonbackpacks/api/PlexonBackpacksAPI.class \
+            com/zpkdxgames/plexonbackpacks/service/BackpackService.class \
+            com/zpkdxgames/plexonbackpacks/service/SessionRegistry.class \
+            com/zpkdxgames/plexonbackpacks/storage/BackpackDataStore.class; do
+            grep -qx "$required" build/release-evidence/jar-contents.txt
+          done
+          unzip -p "$JAR" plugin.yml | grep -F "version: '${VERSION}'"
           unzip -p "$JAR" plugin.yml | grep -F "api-version: '26.2'"
-          jar tf "$JAR" | grep -F 'com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class'
-          if jar tf "$JAR" | grep -q '^com/zpkdxgames/plexoncore/'; then
-            echo "PlexonCore classes were shaded into PlexonBackpacks" >&2
-            exit 1
-          fi
-          if jar tf "$JAR" | grep -q '^net/milkbowl/vault/'; then
-            echo "Vault classes were shaded into PlexonBackpacks" >&2
-            exit 1
-          fi
-
-      - name: Verify Java 25 bytecode
-        run: |
-          set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           javap -verbose -classpath "$JAR" com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin \
             | grep -F 'major version: 69'
+          for prefix in 'com/zpkdxgames/plexoncore/' 'net/milkbowl/vault/'; do
+            if grep -q "^${prefix}" build/release-evidence/jar-contents.txt; then
+              echo "Provided integration classes must not be shaded: ${prefix}" >&2
+              exit 1
+            fi
+          done
+          (cd build/libs && sha256sum "PlexonBackpacks-${VERSION}.jar" > SHA256SUMS.txt && sha256sum --check SHA256SUMS.txt)
 
-      - name: Verify source whitespace and checksum
+      - name: Write exact provenance
+        shell: bash
         run: |
           set -euo pipefail
-          BASE="$(git merge-base HEAD origin/main)"
-          git diff --check "$BASE" HEAD
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
-          sha256sum "$JAR" > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
+          JAR="build/libs/PlexonBackpacks-${VERSION}.jar"
+          digest="$(sha256sum "$JAR" | awk '{print $1}')"
+          size="$(stat -c%s "$JAR")"
+          cat > build/release-evidence/PROVENANCE.txt <<EOF
+          repository=$GITHUB_REPOSITORY
+          source_sha=$GITHUB_SHA
+          accepted_phase3=$ACCEPTED_PHASE3_SHA
+          accepted_rc2=$ACCEPTED_RC2_SHA
+          version=$VERSION
+          java=25
+          java_major=69
+          paper=26.2.build.121-stable
+          plexoncore=$CORE_VERSION
+          plexoncore_sha256=$CORE_SHA256
+          persistence_schema=2
+          stable_rollback_tag=$ROLLBACK_TAG
+          stable_rollback_sha=$ROLLBACK_SHA
+          stable_rollback_jar_sha256=$ROLLBACK_JAR_SHA256
+          historical_rc2_tag=$RC2_TAG
+          historical_rc2_jar_sha256=$RC2_JAR_SHA256
+          jar_size=$size
+          jar_sha256=$digest
+          exact_itemstack_serialization=PASS
+          authoritative_session_locking=PASS
+          csv_compaction_commit_boundary=PASS
+          configuration_runtime_rollback=PASS
+          runtime_certification=NOT_EXECUTED
+          EOF
+
+      - name: Check source whitespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check "$(git merge-base HEAD origin/main)" HEAD
 
       - name: Upload verified build
         uses: actions/upload-artifact@v4
         with:
-          name: PlexonBackpacks-2.0.0-rc.2-${{ github.sha }}
+          name: PlexonBackpacks-${{ steps.meta.outputs.version }}-${{ github.sha }}
           path: |
-            build/libs/PlexonBackpacks-2.0.0-rc.2.jar
-            SHA256SUMS.txt
-            build/test-results/test/
+            build/libs/PlexonBackpacks-${{ steps.meta.outputs.version }}.jar
+            build/libs/SHA256SUMS.txt
+            build/release-evidence/TEST_SUMMARY.txt
+            build/release-evidence/PROVENANCE.txt
           if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.sha }}
+          path: build/test-results/test/

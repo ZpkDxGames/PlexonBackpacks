@@ -20,7 +20,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
@@ -400,9 +399,11 @@ public final class BackpackDataStore {
             }
         }
 
-        for (Map.Entry<UUID, SnapshotRow> entry : snapshots.entrySet()) {
-            latestRows.put(entry.getKey(), entry.getValue().line());
-            dirtyIds.remove(entry.getKey());
+        // Capturing produces an immutable candidate row, but it is not committed yet. In particular,
+        // compaction must never observe a candidate that is still pending or waiting behind another writer.
+        // The committed latestRows map advances only after writeRows finishes the append successfully.
+        for (UUID id : snapshots.keySet()) {
+            dirtyIds.remove(id);
         }
         ids.stream().filter(id -> !records.containsKey(id)).forEach(dirtyIds::remove);
         return snapshots;
@@ -527,8 +528,10 @@ public final class BackpackDataStore {
                         }
                     }
                 }
+                // The append completed successfully. Only now may these rows become compaction authority.
                 for (SnapshotRow row : written) {
                     writtenSequences.put(row.id(), row.sequence());
+                    latestRows.put(row.id(), row.line());
                 }
                 journalRows += written.size();
 

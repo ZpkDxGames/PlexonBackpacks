@@ -7,9 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zpkdxgames.plexonbackpacks.api.PlexonBackpacksAPI;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
@@ -104,6 +106,38 @@ class PluginIntegrationTest {
         ItemStack refreshed = player.getInventory().getItemInMainHand();
         assertEquals("keep-me", refreshed.getItemMeta().getPersistentDataContainer()
                 .get(foreign, PersistentDataType.STRING));
+    }
+
+    @Test
+    void failedReloadRestoresLastKnownGoodRuntimeConfig() throws Exception {
+        Path configPath = plugin.getDataFolder().toPath().resolve("config.yml");
+        String lastGoodFile = Files.readString(configPath);
+        boolean quickDepositBefore = plugin.getConfig().getBoolean("settings.quick-deposit-enabled", true);
+        int basicSlotsBefore = api.tiers().stream()
+                .filter(tier -> tier.id().equals("basic"))
+                .findFirst().orElseThrow().slots();
+
+        YamlConfiguration candidate = YamlConfiguration.loadConfiguration(configPath.toFile());
+        candidate.set("settings.quick-deposit-enabled", !quickDepositBefore);
+        candidate.set("tiers.basic.upgrade-cost", -1.0D);
+        candidate.save(configPath.toFile());
+        String rejectedFile = Files.readString(configPath);
+
+        assertFalse(plugin.reloadPlugin());
+        assertEquals(quickDepositBefore,
+                plugin.getConfig().getBoolean("settings.quick-deposit-enabled", !quickDepositBefore),
+                "failed reload must restore dynamic settings used by the live runtime");
+        assertEquals(basicSlotsBefore, api.tiers().stream()
+                        .filter(tier -> tier.id().equals("basic"))
+                        .findFirst().orElseThrow().slots(),
+                "failed reload must retain the last runtime-accepted tier map");
+        assertEquals(rejectedFile, Files.readString(configPath),
+                "external config candidate must remain on disk for administrator correction");
+
+        Files.writeString(configPath, lastGoodFile);
+        assertTrue(plugin.reloadPlugin());
+        assertEquals(quickDepositBefore,
+                plugin.getConfig().getBoolean("settings.quick-deposit-enabled", !quickDepositBefore));
     }
 
     @Test
