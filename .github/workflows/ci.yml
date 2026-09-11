@@ -57,9 +57,10 @@ jobs:
       - name: Verify release JAR and isolation
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           test -f "$JAR"
-          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.1'"
+          unzip -p "$JAR" plugin.yml | grep -F "version: '2.0.0-rc.2'"
+          unzip -p "$JAR" plugin.yml | grep -F "api-version: '26.2'"
           jar tf "$JAR" | grep -F 'com/zpkdxgames/plexonbackpacks/PlexonBackpacksPlugin.class'
           if jar tf "$JAR" | grep -q '^com/zpkdxgames/plexoncore/'; then
             echo "PlexonCore classes were shaded into PlexonBackpacks" >&2
@@ -73,7 +74,7 @@ jobs:
       - name: Verify Java 25 bytecode
         run: |
           set -euo pipefail
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           javap -verbose -classpath "$JAR" com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin \
             | grep -F 'major version: 69'
 
@@ -82,16 +83,16 @@ jobs:
           set -euo pipefail
           BASE="$(git merge-base HEAD origin/main)"
           git diff --check "$BASE" HEAD
-          JAR="build/libs/PlexonBackpacks-2.0.0-rc.1.jar"
+          JAR="build/libs/PlexonBackpacks-2.0.0-rc.2.jar"
           sha256sum "$JAR" > SHA256SUMS.txt
           sha256sum --check SHA256SUMS.txt
 
       - name: Upload verified build
         uses: actions/upload-artifact@v4
         with:
-          name: PlexonBackpacks-2.0.0-rc.1-${{ github.sha }}
+          name: PlexonBackpacks-2.0.0-rc.2-${{ github.sha }}
           path: |
-            build/libs/PlexonBackpacks-2.0.0-rc.1.jar
+            build/libs/PlexonBackpacks-2.0.0-rc.2.jar
             SHA256SUMS.txt
             build/test-results/test/
           if-no-files-found: error
