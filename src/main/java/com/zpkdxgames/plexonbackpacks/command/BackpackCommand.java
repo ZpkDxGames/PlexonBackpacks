@@ -4,6 +4,7 @@ import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin;
 import com.zpkdxgames.plexonbackpacks.PlexonBackpacksPlugin.DiagnosticsSnapshot;
 import com.zpkdxgames.plexonbackpacks.config.ConfigManager;
 import com.zpkdxgames.plexonbackpacks.inventory.BackpackHolder;
+import com.zpkdxgames.plexonbackpacks.inventory.BackpackInfoGui;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.model.BackpackRecord;
@@ -36,6 +37,7 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
     private final BackpackItemFactory itemFactory;
     private final BackpackService service;
     private final AdminMenuService adminMenu;
+    private final BackpackInfoGui infoGui;
     private final Map<String, PendingForceClose> pendingForceCloses = new HashMap<>();
 
     public BackpackCommand(
@@ -44,7 +46,8 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             Messages messages,
             BackpackItemFactory itemFactory,
             BackpackService service,
-            AdminMenuService adminMenu
+            AdminMenuService adminMenu,
+            BackpackInfoGui infoGui
     ) {
         this.plugin = plugin;
         this.config = config;
@@ -52,6 +55,7 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
         this.itemFactory = itemFactory;
         this.service = service;
         this.adminMenu = adminMenu;
+        this.infoGui = infoGui;
     }
 
     @Override
@@ -118,7 +122,7 @@ public final class BackpackCommand implements CommandExecutor, TabCompleter {
             messages.send(player, "held-required");
             return true;
         }
-        service.upgrade(player, item);
+        infoGui.openForReference(player, item);
         return true;
     }
 
