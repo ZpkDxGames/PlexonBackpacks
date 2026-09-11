@@ -1,6 +1,7 @@
 package com.zpkdxgames.plexonbackpacks.listener;
 
 import com.zpkdxgames.plexonbackpacks.inventory.BackpackHolder;
+import com.zpkdxgames.plexonbackpacks.inventory.BackpackInfoGui;
 import com.zpkdxgames.plexonbackpacks.inventory.BackpackLayout;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.item.BackpackNestingPolicy;
@@ -34,11 +35,18 @@ public final class BackpackListener implements Listener {
     private final BackpackService service;
     private final BackpackItemFactory itemFactory;
     private final Messages messages;
+    private final BackpackInfoGui infoGui;
 
-    public BackpackListener(BackpackService service, BackpackItemFactory itemFactory, Messages messages) {
+    public BackpackListener(
+            BackpackService service,
+            BackpackItemFactory itemFactory,
+            Messages messages,
+            BackpackInfoGui infoGui
+    ) {
         this.service = service;
         this.itemFactory = itemFactory;
         this.messages = messages;
+        this.infoGui = infoGui;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -199,11 +207,12 @@ public final class BackpackListener implements Listener {
             return;
         }
         int relative = rawSlot - holder.controlRowStart();
-        if (controlRerenders(relative) && !isEmpty(event.getCursor())) {
+        if (controlNeedsClearCursor(relative) && !isEmpty(event.getCursor())) {
             messages.send(player, "cursor-busy");
             return;
         }
         switch (relative) {
+            case BackpackLayout.INFO_SLOT_OFFSET -> infoGui.openFromStorage(player, holder);
             case BackpackLayout.PREVIOUS_SLOT_OFFSET -> service.changePage(holder, holder.page() - 1);
             case BackpackLayout.SORT_SLOT_OFFSET -> {
                 if (!service.sort(holder)) {
@@ -218,7 +227,7 @@ public final class BackpackListener implements Listener {
             case BackpackLayout.CLOSE_SLOT_OFFSET -> player.closeInventory();
             case BackpackLayout.NEXT_SLOT_OFFSET -> service.changePage(holder, holder.page() + 1);
             default -> {
-                // Information/filler slots are intentionally inert.
+                // Filler slots are intentionally inert.
             }
         }
     }
@@ -238,8 +247,9 @@ public final class BackpackListener implements Listener {
         };
     }
 
-    private static boolean controlRerenders(int relative) {
-        return relative == BackpackLayout.PREVIOUS_SLOT_OFFSET
+    private static boolean controlNeedsClearCursor(int relative) {
+        return relative == BackpackLayout.INFO_SLOT_OFFSET
+                || relative == BackpackLayout.PREVIOUS_SLOT_OFFSET
                 || relative == BackpackLayout.SORT_SLOT_OFFSET
                 || relative == BackpackLayout.QUICK_DEPOSIT_SLOT_OFFSET
                 || relative == BackpackLayout.NEXT_SLOT_OFFSET;
