@@ -8,8 +8,10 @@ import com.zpkdxgames.plexonbackpacks.integration.core.CoreBridge;
 import com.zpkdxgames.plexonbackpacks.integration.core.CoreBridgeFactory;
 import com.zpkdxgames.plexonbackpacks.integration.economy.EconomyGateway;
 import com.zpkdxgames.plexonbackpacks.integration.economy.EconomyGatewayFactory;
+import com.zpkdxgames.plexonbackpacks.inventory.BackpackInfoGui;
 import com.zpkdxgames.plexonbackpacks.item.BackpackItemFactory;
 import com.zpkdxgames.plexonbackpacks.listener.AdminMenuListener;
+import com.zpkdxgames.plexonbackpacks.listener.BackpackInfoListener;
 import com.zpkdxgames.plexonbackpacks.listener.BackpackListener;
 import com.zpkdxgames.plexonbackpacks.message.Messages;
 import com.zpkdxgames.plexonbackpacks.recipe.RecipeRegistry;
@@ -29,6 +31,7 @@ public class PlexonBackpacksPlugin extends JavaPlugin {
     private BackpackDataStore dataStore;
     private BackpackItemFactory itemFactory;
     private BackpackService backpackService;
+    private BackpackInfoGui backpackInfoGui;
     private AdminMenuService adminMenuService;
     private RecipeRegistry recipeRegistry;
     private BukkitTask autosaveTask;
@@ -54,11 +57,14 @@ public class PlexonBackpacksPlugin extends JavaPlugin {
             economyGateway = EconomyGatewayFactory.resolve(this);
             backpackService = new BackpackService(
                     this, configManager, messages, itemFactory, dataStore, economyGateway);
+            backpackInfoGui = new BackpackInfoGui(
+                    this, configManager, messages, itemFactory, backpackService, economyGateway);
             adminMenuService = new AdminMenuService(configManager, itemFactory);
             recipeRegistry = new RecipeRegistry(this, configManager, itemFactory, backpackService, messages);
 
             getServer().getPluginManager().registerEvents(
-                    new BackpackListener(backpackService, itemFactory, messages), this);
+                    new BackpackListener(backpackService, itemFactory, messages, backpackInfoGui), this);
+            getServer().getPluginManager().registerEvents(new BackpackInfoListener(backpackInfoGui), this);
             getServer().getPluginManager().registerEvents(
                     new AdminMenuListener(configManager, messages, itemFactory, backpackService), this);
             getServer().getPluginManager().registerEvents(recipeRegistry, this);
@@ -68,7 +74,7 @@ public class PlexonBackpacksPlugin extends JavaPlugin {
                 throw new IllegalStateException("The backpack command is missing from plugin.yml");
             }
             BackpackCommand executor = new BackpackCommand(
-                    this, configManager, messages, itemFactory, backpackService, adminMenuService);
+                    this, configManager, messages, itemFactory, backpackService, adminMenuService, backpackInfoGui);
             command.setExecutor(executor);
             command.setTabCompleter(executor);
 
