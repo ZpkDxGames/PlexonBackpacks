@@ -19,6 +19,7 @@ import com.zpkdxgames.plexonbackpacks.service.AdminMenuService;
 import com.zpkdxgames.plexonbackpacks.service.BackpackService;
 import com.zpkdxgames.plexonbackpacks.storage.BackpackDataStore;
 import java.util.Map;
+import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.ServicePriority;
@@ -124,20 +125,49 @@ public class PlexonBackpacksPlugin extends JavaPlugin {
             return false;
         }
 
-        reloadConfig();
+        String previousRuntimeConfig = getConfig().saveToString();
         try {
+            reloadConfig();
             configManager.reload();
+            applyReloadedRuntime();
+            coreBridge.markReady("Reload completed after all authoritative backpack sessions were durably closed");
+            return true;
         } catch (RuntimeException exception) {
-            getLogger().severe("Could not reload config.yml: " + exception.getMessage());
-            coreBridge.markDegraded("Configuration reload failed: " + exception.getMessage());
+            getLogger().log(Level.SEVERE,
+                    "Rejected backpack configuration/runtime reload; restoring last-known-good runtime settings.", exception);
+            boolean restored = restoreRuntimeConfig(previousRuntimeConfig);
+            if (restored) {
+                coreBridge.markDegraded("Configuration reload rejected; last-known-good runtime was restored: "
+                        + safeMessage(exception));
+            } else {
+                coreBridge.markFailed("Configuration reload and last-known-good runtime restoration both failed");
+            }
             return false;
         }
+    }
 
+    private void applyReloadedRuntime() {
         adminMenuService.reload();
         recipeRegistry.registerAll();
         restartAutosave();
-        coreBridge.markReady("Reload completed after all authoritative backpack sessions were durably closed");
-        return true;
+    }
+
+    private boolean restoreRuntimeConfig(String previousRuntimeConfig) {
+        try {
+            getConfig().loadFromString(previousRuntimeConfig);
+            configManager.reload();
+            applyReloadedRuntime();
+            return true;
+        } catch (Exception rollbackException) {
+            getLogger().log(Level.SEVERE,
+                    "CRITICAL: Could not restore the last-known-good backpack runtime after reload failure.",
+                    rollbackException);
+            return false;
+        }
+    }
+
+    private static String safeMessage(RuntimeException exception) {
+        return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
     }
 
     public boolean saveBackpacksNow() {
